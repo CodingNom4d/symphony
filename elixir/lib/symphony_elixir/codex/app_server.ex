@@ -367,7 +367,14 @@ defmodule SymphonyElixir.Codex.AppServer do
     case Jason.decode(payload_string) do
       {:ok, %{"method" => "turn/completed"} = payload} ->
         emit_turn_event(on_message, :turn_completed, payload, payload_string, port, payload)
-        {:ok, :turn_completed}
+
+        case turn_completed_status(payload) do
+          status when status in ["failed", "cancelled"] ->
+            {:error, {:turn_completed, status, Map.get(payload, "params")}}
+
+          _status ->
+            {:ok, :turn_completed}
+        end
 
       {:ok, %{"method" => "turn/failed", "params" => _} = payload} ->
         emit_turn_event(
@@ -517,11 +524,18 @@ defmodule SymphonyElixir.Codex.AppServer do
             metadata
           )
 
-          Logger.debug("Codex notification: #{inspect(method)}")
+          log_notification(method, payload)
           receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
         end
     end
   end
+
+  defp turn_completed_status(payload) do
+    get_in(payload, ["params", "turn", "status"])
+  end
+
+  defp log_notification("error", payload), do: Logger.warning("Codex error notification: #{inspect(payload)}")
+  defp log_notification(method, _payload), do: Logger.debug("Codex notification: #{inspect(method)}")
 
   defp maybe_handle_approval_request(
          port,
