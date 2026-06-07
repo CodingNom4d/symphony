@@ -242,6 +242,7 @@ defmodule SymphonyElixirWeb.Presenter do
     entry
     |> Map.get(:codex_transcript, [])
     |> Enum.map(&transcript_entry_payload/1)
+    |> merge_streaming_transcript_entries()
   end
 
   defp transcript_entry_payload(entry) when is_map(entry) do
@@ -252,7 +253,8 @@ defmodule SymphonyElixirWeb.Presenter do
       at: iso8601(Map.get(entry, :timestamp) || Map.get(entry, "timestamp")),
       event: event,
       role: transcript_role(event, message),
-      summary: summarize_message(message)
+      summary: summarize_message(message),
+      stream_delta: transcript_agent_stream_delta(message)
     }
   end
 
@@ -261,9 +263,44 @@ defmodule SymphonyElixirWeb.Presenter do
       at: nil,
       event: nil,
       role: "system",
-      summary: summarize_message(entry)
+      summary: summarize_message(entry),
+      stream_delta: nil
     }
   end
+
+  defp merge_streaming_transcript_entries(entries) do
+    {entries, pending} =
+      Enum.reduce(entries, {[], nil}, fn entry, {acc, pending} ->
+        case Map.get(entry, :stream_delta) do
+          delta when is_binary(delta) ->
+            {acc, append_stream_delta(pending, entry, delta)}
+
+          _other ->
+            acc = flush_stream_delta(acc, pending)
+            {[Map.drop(entry, [:stream_delta]) | acc], nil}
+        end
+      end)
+
+    entries
+    |> flush_stream_delta(pending)
+    |> Enum.reverse()
+  end
+
+  defp append_stream_delta(nil, entry, delta) do
+    %{
+      at: entry.at,
+      event: "agent_message",
+      role: "agent",
+      summary: delta
+    }
+  end
+
+  defp append_stream_delta(pending, _entry, delta) do
+    Map.update!(pending, :summary, &(&1 <> delta))
+  end
+
+  defp flush_stream_delta(entries, nil), do: entries
+  defp flush_stream_delta(entries, pending), do: [pending | entries]
 
   defp transcript_role(_event, message) do
     method = transcript_message_method(message)
@@ -287,6 +324,38 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp transcript_message_method(_message), do: nil
+
+  defp transcript_agent_stream_delta(message) when is_map(message) do
+    method = transcript_message_method(message)
+
+    if is_binary(method) and String.contains?(method, "agent_message") and
+         String.contains?(method, "delta") do
+      message
+      |> transcript_message_payload()
+      |> transcript_delta_content()
+    end
+  end
+
+  defp transcript_agent_stream_delta(_message), do: nil
+
+  defp transcript_message_payload(message) when is_map(message) do
+    Map.get(message, :message) || Map.get(message, "message") || message
+  end
+
+  defp transcript_delta_content(payload) do
+    map_path(payload, ["params", "msg", "content"]) ||
+      map_path(payload, [:params, :msg, :content]) ||
+      map_path(payload, ["params", "msg", "delta"]) ||
+      map_path(payload, [:params, :msg, :delta]) ||
+      map_path(payload, ["params", "msg", "text"]) ||
+      map_path(payload, [:params, :msg, :text]) ||
+      map_path(payload, ["params", "content"]) ||
+      map_path(payload, [:params, :content]) ||
+      map_path(payload, ["params", "delta"]) ||
+      map_path(payload, [:params, :delta]) ||
+      map_path(payload, ["params", "text"]) ||
+      map_path(payload, [:params, :text])
+  end
 
   defp map_path(payload, path) when is_map(payload) and is_list(path) do
     Enum.reduce_while(path, payload, fn key, acc ->

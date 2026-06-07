@@ -360,8 +360,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "transcript" => [
                    %{
                      "at" => state_payload["running"] |> List.first() |> Map.fetch!("transcript") |> List.first() |> Map.fetch!("at"),
-                     "event" => "notification",
-                     "summary" => "agent message content streaming: hello from codex",
+                     "event" => "agent_message",
+                     "summary" => "hello from codex",
                      "role" => "agent"
                    }
                  ],
@@ -438,8 +438,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                "transcript" => [
                  %{
                    "at" => issue_payload["running"]["transcript"] |> List.first() |> Map.fetch!("at"),
-                   "event" => "notification",
-                   "summary" => "agent message content streaming: hello from codex",
+                   "event" => "agent_message",
+                   "summary" => "hello from codex",
                    "role" => "agent"
                  }
                ],
@@ -451,8 +451,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                "codex_session_logs" => [
                  %{
                    "at" => issue_payload["logs"]["codex_session_logs"] |> List.first() |> Map.fetch!("at"),
-                   "event" => "notification",
-                   "summary" => "agent message content streaming: hello from codex",
+                   "event" => "agent_message",
+                   "summary" => "hello from codex",
                    "role" => "agent"
                  }
                ]
@@ -460,8 +460,8 @@ defmodule SymphonyElixir.ExtensionsTest do
              "recent_events" => [
                %{
                  "at" => issue_payload["recent_events"] |> List.first() |> Map.fetch!("at"),
-                 "event" => "notification",
-                 "message" => "agent message content streaming: hello from codex"
+                 "event" => "agent_message",
+                 "message" => "hello from codex"
                }
              ],
              "last_error" => nil,
@@ -495,6 +495,48 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert %{"queued" => true, "coalesced" => false, "operations" => ["poll", "reconcile"]} =
              json_response(conn, 202)
+  end
+
+  test "presenter merges adjacent agent content deltas into chat entries" do
+    orchestrator_name = Module.concat(__MODULE__, :TranscriptMergeOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> put_in(
+        [:running, Access.at(0), :codex_transcript],
+        [
+          agent_delta("Using"),
+          agent_delta(" "),
+          agent_delta("`using-superpowers`"),
+          agent_delta(" skill."),
+          transcript_event(:notification, "checkpoint")
+        ]
+      )
+
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: %{queued: false, coalesced: false, requested_at: nil, operations: []}})
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    state_payload = build_conn() |> get("/api/v1/state") |> json_response(200)
+    [merged_entry, checkpoint_entry] = state_payload["running"] |> List.first() |> Map.fetch!("transcript")
+
+    assert merged_entry == %{
+             "at" => merged_entry["at"],
+             "event" => "agent_message",
+             "role" => "agent",
+             "summary" => "Using `using-superpowers` skill."
+           }
+
+    assert checkpoint_entry == %{
+             "at" => checkpoint_entry["at"],
+             "event" => "notification",
+             "role" => "system",
+             "summary" => "checkpoint"
+           }
+
+    {:ok, _view, html} = live(build_conn(), "/")
+    assert html =~ "Using `using-superpowers` skill."
+    refute html =~ "agent message content streaming: Using"
   end
 
   test "phoenix observability api preserves 405, 404, and unavailable behavior" do
@@ -626,7 +668,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     assert html =~ "Codex transcript"
-    assert html =~ "agent message content streaming: hello from codex"
+    assert html =~ "hello from codex"
     refute html =~ "<textarea"
     refute html =~ "Send"
     refute html =~ "data-runtime-clock="
@@ -844,6 +886,25 @@ defmodule SymphonyElixir.ExtensionsTest do
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}}
+    }
+  end
+
+  defp agent_delta(content) do
+    transcript_event(:notification, %{
+      event: :notification,
+      message: %{
+        "method" => "codex/event/agent_message_content_delta",
+        "params" => %{"msg" => %{"content" => content}}
+      },
+      timestamp: DateTime.utc_now()
+    })
+  end
+
+  defp transcript_event(event, message) do
+    %{
+      event: event,
+      message: message,
+      timestamp: DateTime.utc_now()
     }
   end
 
