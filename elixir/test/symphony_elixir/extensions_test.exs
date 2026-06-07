@@ -539,6 +539,39 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "agent message content streaming: Using"
   end
 
+  test "presenter merges app-server agent message deltas into chat entries" do
+    orchestrator_name = Module.concat(__MODULE__, :AppServerTranscriptMergeOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> put_in(
+        [:running, Access.at(0), :codex_transcript],
+        [
+          app_server_agent_delta("I"),
+          app_server_agent_delta(" am"),
+          app_server_agent_delta(" using"),
+          app_server_agent_delta(" Superpowers."),
+          transcript_event(:notification, "checkpoint")
+        ]
+      )
+
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: %{queued: false, coalesced: false, requested_at: nil, operations: []}})
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    state_payload = build_conn() |> get("/api/v1/state") |> json_response(200)
+    [merged_entry, checkpoint_entry] = state_payload["running"] |> List.first() |> Map.fetch!("transcript")
+
+    assert merged_entry == %{
+             "at" => merged_entry["at"],
+             "event" => "agent_message",
+             "role" => "agent",
+             "summary" => "I am using Superpowers."
+           }
+
+    assert checkpoint_entry["summary"] == "checkpoint"
+  end
+
   test "phoenix observability api preserves 405, 404, and unavailable behavior" do
     unavailable_orchestrator = Module.concat(__MODULE__, :UnavailableOrchestrator)
     start_test_endpoint(orchestrator: unavailable_orchestrator, snapshot_timeout_ms: 5)
@@ -895,6 +928,17 @@ defmodule SymphonyElixir.ExtensionsTest do
       message: %{
         "method" => "codex/event/agent_message_content_delta",
         "params" => %{"msg" => %{"content" => content}}
+      },
+      timestamp: DateTime.utc_now()
+    })
+  end
+
+  defp app_server_agent_delta(delta) do
+    transcript_event(:notification, %{
+      event: :notification,
+      message: %{
+        "method" => "item/agentMessage/delta",
+        "params" => %{"delta" => delta}
       },
       timestamp: DateTime.utc_now()
     })

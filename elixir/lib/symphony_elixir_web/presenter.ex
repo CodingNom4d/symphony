@@ -307,7 +307,7 @@ defmodule SymphonyElixirWeb.Presenter do
 
     cond do
       is_binary(method) and String.contains?(method, "user_message") -> "user"
-      is_binary(method) and String.contains?(method, "agent_message") -> "agent"
+      agent_message_method?(method) -> "agent"
       true -> "system"
     end
   end
@@ -328,8 +328,7 @@ defmodule SymphonyElixirWeb.Presenter do
   defp transcript_agent_stream_delta(message) when is_map(message) do
     method = transcript_message_method(message)
 
-    if is_binary(method) and String.contains?(method, "agent_message") and
-         String.contains?(method, "delta") do
+    if agent_message_method?(method) and String.contains?(method, "delta") do
       message
       |> transcript_message_payload()
       |> transcript_delta_content()
@@ -337,6 +336,12 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp transcript_agent_stream_delta(_message), do: nil
+
+  defp agent_message_method?(method) when is_binary(method) do
+    String.contains?(method, "agent_message") or String.contains?(method, "agentMessage")
+  end
+
+  defp agent_message_method?(_method), do: false
 
   defp transcript_message_payload(message) when is_map(message) do
     Map.get(message, :message) || Map.get(message, "message") || message
