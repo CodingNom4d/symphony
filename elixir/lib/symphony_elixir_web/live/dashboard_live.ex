@@ -216,7 +216,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <div class="section-header">
             <div>
               <h2 class="section-title">Codex transcript</h2>
-              <p class="section-copy">Read-only app-server events grouped by active or blocked issue.</p>
+              <p class="section-copy">Agent and subagent messages grouped by active or blocked issue.</p>
             </div>
           </div>
 
@@ -381,7 +381,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
     |> Map.take([:running, :blocked])
     |> Map.values()
     |> List.flatten()
+    |> Enum.map(&visible_transcript_session/1)
     |> Enum.filter(fn entry -> Map.get(entry, :transcript, []) != [] end)
+  end
+
+  defp visible_transcript_session(entry) do
+    transcript =
+      entry
+      |> Map.get(:transcript, [])
+      |> Enum.filter(&(Map.get(&1, :role) == "agent"))
+
+    Map.put(entry, :transcript, transcript)
   end
 
   attr(:identifier, :string, required: true)

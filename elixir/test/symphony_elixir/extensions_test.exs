@@ -755,6 +755,37 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute render(view) =~ "javascript:alert"
   end
 
+  test "dashboard transcript renders agent messages without system events" do
+    orchestrator_name = Module.concat(__MODULE__, :DashboardTranscriptMessagesOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> put_in(
+        [:running, Access.at(0), :codex_transcript],
+        [
+          transcript_event(:notification, "internal dashboard event"),
+          agent_delta("Visible agent note")
+        ]
+      )
+      |> Map.put(:blocked, [])
+
+    {:ok, _orchestrator_pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: %{queued: false, coalesced: false, requested_at: nil, operations: []}
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, _view, html} = live(build_conn(), "/")
+    assert html =~ "Codex transcript"
+    assert html =~ "Agent and subagent messages grouped by active or blocked issue."
+    assert html =~ "Visible agent note"
+    refute html =~ "internal dashboard event"
+    refute html =~ ">system</span>"
+  end
+
   test "dashboard liveview renders an unavailable state without crashing" do
     start_test_endpoint(
       orchestrator: Module.concat(__MODULE__, :MissingDashboardOrchestrator),
