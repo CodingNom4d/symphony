@@ -102,6 +102,104 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            }
   end
 
+  test "orchestrator snapshot retains recent codex transcript entries" do
+    issue_id = "issue-transcript"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-301",
+      title: "Transcript test",
+      description: "Capture codex transcript",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-301"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :TranscriptOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    state_with_issue =
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+
+    :sys.replace_state(pid, fn _ -> state_with_issue end)
+
+    first_at = DateTime.utc_now()
+    second_at = DateTime.add(first_at, 1, :second)
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-transcript",
+         timestamp: first_at
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "codex/event/agent_message_content_delta",
+           "params" => %{"msg" => %{"content" => "hello from codex"}}
+         },
+         timestamp: second_at
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+
+    assert snapshot_entry.codex_transcript == [
+             %{
+               event: :session_started,
+               message: %{
+                 event: :session_started,
+                 message: nil,
+                 timestamp: first_at
+               },
+               timestamp: first_at
+             },
+             %{
+               event: :notification,
+               message: %{
+                 event: :notification,
+                 message: %{
+                   "method" => "codex/event/agent_message_content_delta",
+                   "params" => %{"msg" => %{"content" => "hello from codex"}}
+                 },
+                 timestamp: second_at
+               },
+               timestamp: second_at
+             }
+           ]
+  end
+
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
 

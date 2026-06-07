@@ -215,6 +215,41 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Codex transcript</h2>
+              <p class="section-copy">Read-only app-server events grouped by active or blocked issue.</p>
+            </div>
+          </div>
+
+          <%= if transcript_sessions(@payload) == [] do %>
+            <p class="empty-state">No Codex transcript events yet.</p>
+          <% else %>
+            <div class="transcript-list">
+              <article :for={session <- transcript_sessions(@payload)} class="transcript-session">
+                <div class="transcript-session-header">
+                  <span class="issue-id"><%= session.issue_identifier %></span>
+                  <span class={state_badge_class(session.state || session.status)}>
+                    <%= session.state || session.status %>
+                  </span>
+                </div>
+
+                <ol class="transcript-events">
+                  <li :for={entry <- session.transcript} class={"transcript-entry transcript-entry-#{entry.role}"}>
+                    <div class="transcript-meta">
+                      <span class="transcript-role"><%= entry.role %></span>
+                      <span class="mono"><%= entry.at || "n/a" %></span>
+                      <span><%= entry.event || "event" %></span>
+                    </div>
+                    <p class="transcript-summary"><%= entry.summary || "no message" %></p>
+                  </li>
+                </ol>
+              </article>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Blocked sessions</h2>
               <p class="section-copy">Issues paused because Codex requested operator input or approval.</p>
             </div>
@@ -339,6 +374,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp snapshot_timeout_ms do
     Endpoint.config(:snapshot_timeout_ms) || 15_000
+  end
+
+  defp transcript_sessions(payload) do
+    payload
+    |> Map.take([:running, :blocked])
+    |> Map.values()
+    |> List.flatten()
+    |> Enum.filter(fn entry -> Map.get(entry, :transcript, []) != [] end)
   end
 
   attr(:identifier, :string, required: true)

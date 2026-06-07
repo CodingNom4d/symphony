@@ -80,7 +80,7 @@ defmodule SymphonyElixirWeb.Presenter do
       retry: retry && retry_issue_payload(retry),
       blocked: blocked && blocked_issue_payload(blocked),
       logs: %{
-        codex_session_logs: []
+        codex_session_logs: transcript_payload(running || blocked)
       },
       recent_events: recent_events_payload(running || blocked),
       last_error: (blocked && blocked.error) || (retry && retry.error),
@@ -113,6 +113,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      transcript: transcript_payload(entry),
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -147,7 +148,8 @@ defmodule SymphonyElixirWeb.Presenter do
       blocked_at: iso8601(entry.blocked_at),
       last_event: entry.last_codex_event,
       last_message: summarize_message(entry.last_codex_message),
-      last_event_at: iso8601(entry.last_codex_timestamp)
+      last_event_at: iso8601(entry.last_codex_timestamp),
+      transcript: transcript_payload(entry)
     }
   end
 
@@ -162,6 +164,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_event: running.last_codex_event,
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
+      transcript: transcript_payload(running),
       tokens: %{
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
@@ -190,7 +193,8 @@ defmodule SymphonyElixirWeb.Presenter do
       blocked_at: iso8601(blocked.blocked_at),
       last_event: blocked.last_codex_event,
       last_message: summarize_message(blocked.last_codex_message),
-      last_event_at: iso8601(blocked.last_codex_timestamp)
+      last_event_at: iso8601(blocked.last_codex_timestamp),
+      transcript: transcript_payload(blocked)
     }
   end
 
@@ -210,15 +214,91 @@ defmodule SymphonyElixirWeb.Presenter do
   defp recent_events_payload(nil), do: []
 
   defp recent_events_payload(entry) do
-    [
-      %{
-        at: iso8601(entry.last_codex_timestamp),
-        event: entry.last_codex_event,
-        message: summarize_message(entry.last_codex_message)
-      }
-    ]
-    |> Enum.reject(&is_nil(&1.at))
+    case transcript_payload(entry) do
+      [] ->
+        [
+          %{
+            at: iso8601(entry.last_codex_timestamp),
+            event: entry.last_codex_event,
+            message: summarize_message(entry.last_codex_message)
+          }
+        ]
+        |> Enum.reject(&is_nil(&1.at))
+
+      transcript ->
+        Enum.map(transcript, fn item ->
+          %{
+            at: item.at,
+            event: item.event,
+            message: item.summary
+          }
+        end)
+    end
   end
+
+  defp transcript_payload(nil), do: []
+
+  defp transcript_payload(entry) do
+    entry
+    |> Map.get(:codex_transcript, [])
+    |> Enum.map(&transcript_entry_payload/1)
+  end
+
+  defp transcript_entry_payload(entry) when is_map(entry) do
+    message = Map.get(entry, :message) || Map.get(entry, "message")
+    event = Map.get(entry, :event) || Map.get(entry, "event")
+
+    %{
+      at: iso8601(Map.get(entry, :timestamp) || Map.get(entry, "timestamp")),
+      event: event,
+      role: transcript_role(event, message),
+      summary: summarize_message(message)
+    }
+  end
+
+  defp transcript_entry_payload(entry) do
+    %{
+      at: nil,
+      event: nil,
+      role: "system",
+      summary: summarize_message(entry)
+    }
+  end
+
+  defp transcript_role(_event, message) do
+    method = transcript_message_method(message)
+
+    cond do
+      is_binary(method) and String.contains?(method, "user_message") -> "user"
+      is_binary(method) and String.contains?(method, "agent_message") -> "agent"
+      true -> "system"
+    end
+  end
+
+  defp transcript_message_method(message) when is_map(message) do
+    payload = Map.get(message, :message) || Map.get(message, "message") || message
+
+    map_path(payload, [:payload, "method"]) ||
+      map_path(payload, [:payload, :method]) ||
+      map_path(payload, ["payload", "method"]) ||
+      map_path(payload, ["payload", :method]) ||
+      Map.get(payload, "method") ||
+      Map.get(payload, :method)
+  end
+
+  defp transcript_message_method(_message), do: nil
+
+  defp map_path(payload, path) when is_map(payload) and is_list(path) do
+    Enum.reduce_while(path, payload, fn key, acc ->
+      if is_map(acc) and Map.has_key?(acc, key) do
+        {:cont, Map.get(acc, key)}
+      else
+        {:halt, nil}
+      end
+    end)
+  end
+
+  defp map_path(_payload, _path), do: nil
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)

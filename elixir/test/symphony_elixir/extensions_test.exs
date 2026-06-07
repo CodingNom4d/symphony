@@ -357,6 +357,14 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
+                 "transcript" => [
+                   %{
+                     "at" => state_payload["running"] |> List.first() |> Map.fetch!("transcript") |> List.first() |> Map.fetch!("at"),
+                     "event" => "notification",
+                     "summary" => "agent message content streaming: hello from codex",
+                     "role" => "agent"
+                   }
+                 ],
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
@@ -385,7 +393,15 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
                  "last_event" => "turn_input_required",
                  "last_message" => "turn blocked: waiting for user input",
-                 "last_event_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("last_event_at")
+                 "last_event_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("last_event_at"),
+                 "transcript" => [
+                   %{
+                     "at" => state_payload["blocked"] |> List.first() |> Map.fetch!("transcript") |> List.first() |> Map.fetch!("at"),
+                     "event" => "turn_input_required",
+                     "summary" => "turn blocked: waiting for user input",
+                     "role" => "system"
+                   }
+                 ]
                }
              ],
              "codex_totals" => %{
@@ -419,12 +435,35 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
+               "transcript" => [
+                 %{
+                   "at" => issue_payload["running"]["transcript"] |> List.first() |> Map.fetch!("at"),
+                   "event" => "notification",
+                   "summary" => "agent message content streaming: hello from codex",
+                   "role" => "agent"
+                 }
+               ],
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
              "retry" => nil,
              "blocked" => nil,
-             "logs" => %{"codex_session_logs" => []},
-             "recent_events" => [],
+             "logs" => %{
+               "codex_session_logs" => [
+                 %{
+                   "at" => issue_payload["logs"]["codex_session_logs"] |> List.first() |> Map.fetch!("at"),
+                   "event" => "notification",
+                   "summary" => "agent message content streaming: hello from codex",
+                   "role" => "agent"
+                 }
+               ]
+             },
+             "recent_events" => [
+               %{
+                 "at" => issue_payload["recent_events"] |> List.first() |> Map.fetch!("at"),
+                 "event" => "notification",
+                 "message" => "agent message content streaming: hello from codex"
+               }
+             ],
              "last_error" => nil,
              "tracked" => %{}
            }
@@ -586,6 +625,10 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Offline"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
+    assert html =~ "Codex transcript"
+    assert html =~ "agent message content streaming: hello from codex"
+    refute html =~ "<textarea"
+    refute html =~ "Send"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -738,6 +781,20 @@ defmodule SymphonyElixir.ExtensionsTest do
           last_codex_message: "rendered",
           last_codex_timestamp: nil,
           last_codex_event: :notification,
+          codex_transcript: [
+            %{
+              event: :notification,
+              message: %{
+                event: :notification,
+                message: %{
+                  "method" => "codex/event/agent_message_content_delta",
+                  "params" => %{"msg" => %{"content" => "hello from codex"}}
+                },
+                timestamp: DateTime.utc_now()
+              },
+              timestamp: DateTime.utc_now()
+            }
+          ],
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,
@@ -771,7 +828,18 @@ defmodule SymphonyElixir.ExtensionsTest do
             message: %{"method" => "turn/input_required"},
             timestamp: DateTime.utc_now()
           },
-          last_codex_timestamp: DateTime.utc_now()
+          last_codex_timestamp: DateTime.utc_now(),
+          codex_transcript: [
+            %{
+              event: :turn_input_required,
+              message: %{
+                event: :turn_input_required,
+                message: %{"method" => "turn/input_required"},
+                timestamp: DateTime.utc_now()
+              },
+              timestamp: DateTime.utc_now()
+            }
+          ]
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
