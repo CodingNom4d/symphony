@@ -66,14 +66,16 @@ No description provided.
 Instructions:
 
 1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
-2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
+2. Only stop early for a true blocker (missing required tools/auth/permissions/secrets). If blocked and Linear is available, record it in the workpad and move the issue according to workflow. If Linear itself is unavailable, do not attempt impossible issue/workpad mutations; report the blocker in the final message and exit.
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
+4. Before planning, reviewing, opening/updating the workpad, analyzing repo files, or editing files, apply the DOX workflow: read the repository root `AGENTS.md` when present, read every applicable child `AGENTS.md` from the repository root to each target path, follow the nearest local contract plus parent contracts, and perform a closeout docs pass after meaningful edits. If no root `AGENTS.md` exists, continue with any path-local `AGENTS.md` files you find and note the missing root only when relevant to the task.
+5. Use MemPalace or semantic memory only for recall and discovery; scope recall to the current repository, current issue, and explicitly relevant local Codex skills or rules unless the user asks for broader memory. Binding instructions must come from files in the current workspace. Do not publish recalled content into Linear, PRs, issues, or durable docs unless it has been re-verified against current workspace files or the user explicitly asks to use that recalled source. If semantic recall materially changes the plan or output, record only provenance in the workpad Notes as `memory provenance: <source class> -> <verified workspace file>`; do not copy private recalled content.
 
 Work only in the provided repository copy. Do not touch any other path.
 
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, do not attempt issue state changes or workpad updates. Report `blocked: missing Linear tool/auth` in the final message and exit.
 
 ## Default posture
 
@@ -94,14 +96,18 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+- If a required related skill cannot proceed autonomously because its own instructions require human clarification, treat that as blocked-access unless the workflow has an explicit autonomous fallback.
 
 ## Related skills
 
+- `dox`: repo-local DOX instruction-chain skill at `.codex/skills/dox/SKILL.md`; apply before planning, review, workpad updates, repo analysis, or edits.
 - `linear`: interact with Linear.
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
 - `land`: when ticket reaches `Merging`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
+
+Symphony unattended override: if a related skill asks to wait for or ask a human, this `WORKFLOW.md` controls. Prefer the safest reversible action, documented pushback, or the blocked-access escape hatch; do not wait indefinitely for human input inside an unattended run.
 
 ## Status map
 
@@ -189,11 +195,20 @@ Use this only when completion is blocked by missing required tools or missing au
 
 - GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
 - Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
+- If Linear itself is unavailable, do not attempt issue state changes, workpad updates, or blocker comments. Report `blocked: missing Linear tool/auth` in the final message and exit.
+- For other missing non-GitHub required tools, or other unavailable non-GitHub auth, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
   - what is missing,
   - why it blocks required acceptance/validation,
   - exact human action needed to unblock.
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
+
+## App runtime validation (required)
+
+Use this section when changes touch app files or app behavior.
+
+- Prefer `launch-app` for runtime validation and `github-pr-media` for capture/upload.
+- If either capability is unavailable, look for an existing repo-local validation command or documented manual runtime check and record that substitute evidence in the workpad.
+- If no runtime substitute exists and app-touching validation is required, use the blocked-access escape hatch. Do not search indefinitely or claim app validation without evidence.
 
 ## Step 2: Execution phase (Todo -> In Progress -> Human Review)
 
@@ -214,7 +229,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - You may make temporary local proof edits to validate assumptions (for example: tweak a local build input for `make`, or hardcode a UI account / response path) when this increases confidence.
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
-    - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
+    - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff; follow `App runtime validation (required)` for fallback handling.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
@@ -234,7 +249,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
 12. Only then move issue to `Human Review`.
-    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
+    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch and Linear is available, move to `Human Review` with the blocker brief and explicit unblock actions. If Linear itself is unavailable, final-message-and-exit without issue or workpad mutation.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
@@ -289,7 +304,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - In `Human Review`, do not make changes; wait and poll.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
-- If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.
+- If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action. If Linear itself is unavailable, skip this mutation and final-message-and-exit with `blocked: missing Linear tool/auth`.
 
 ## Workpad template
 
