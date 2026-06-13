@@ -44,7 +44,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 Run targeted tests while iterating, then run full gates before handoff when implementation behavior changes.
 
-`WORKFLOW.md` changes alter the unattended agent prompt and must run the main quality gate unless a narrower prompt-loader/runtime validation is added and documented in the same change.
+`WORKFLOW.md` changes alter the unattended agent prompt and must run the main quality gate unless a narrower prompt-loader/runtime validation is added and documented in the same change. For unattended-agent contract wording, keep `SymphonyElixir.WorkflowContract` and `test/symphony_elixir/workflow_contract_test.exs` current and run that focused test.
 
 Main quality gate:
 
