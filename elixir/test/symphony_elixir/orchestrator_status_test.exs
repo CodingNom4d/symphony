@@ -486,14 +486,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.total_tokens == 15
   end
 
-  test "orchestrator snapshot tracks codex rate-limit payloads" do
+  test "orchestrator snapshot ignores codex rate-limit payloads" do
     issue_id = "issue-rate-limit-snapshot"
 
     issue = %Issue{
       id: issue_id,
       identifier: "MT-221",
-      title: "Rate limit snapshot test",
-      description: "Capture codex rate limit state",
+      title: "Rate limit ignored test",
+      description: "Ignore codex rate limit state",
       state: "In Progress",
       url: "https://example.org/issues/MT-221"
     }
@@ -564,7 +564,123 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     )
 
     snapshot = GenServer.call(pid, :snapshot)
-    assert snapshot.rate_limits == rate_limits
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    refute Map.has_key?(snapshot, :rate_limits)
+    refute retained_codex_messages =~ "rate_limits"
+    refute retained_codex_messages =~ "remaining"
+    refute retained_codex_messages =~ "credits"
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "account/rateLimits/updated",
+           "params" => %{
+             "rateLimits" => %{
+               "primary" => %{"remaining" => 10, "resetsAt" => "2026-06-14T20:56:00Z"}
+             }
+           }
+         },
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    assert StatusDashboard.humanize_codex_message(running_snapshot.last_codex_message) == "account telemetry ignored"
+    refute retained_codex_messages =~ "rateLimits"
+    refute retained_codex_messages =~ "remaining"
+    refute retained_codex_messages =~ "resetsAt"
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "account/updated",
+           "params" => %{
+             "authMode" => "chatgpt",
+             "subscription" => %{"remaining" => 8, "resetsAt" => "2026-06-14T20:56:00Z"}
+           }
+         },
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    assert StatusDashboard.humanize_codex_message(running_snapshot.last_codex_message) == "account updated"
+    refute retained_codex_messages =~ "subscription"
+    refute retained_codex_messages =~ "authMode"
+    refute retained_codex_messages =~ "remaining"
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         raw: Jason.encode!(%{"method" => "codex/event/token_count", "params" => %{"rateLimit" => %{"remaining" => 1}}}),
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    refute retained_codex_messages =~ "rateLimit"
+    refute retained_codex_messages =~ "remaining"
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "limit_id" => "direct-codex-limit",
+           "primary" => %{"remaining" => 3, "limit" => 100},
+           "secondary" => %{"remaining" => 1, "limit" => 20},
+           "credits" => %{"has_credits" => true, "balance" => 12}
+         },
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    assert StatusDashboard.humanize_codex_message(running_snapshot.last_codex_message) == "account telemetry ignored"
+    refute retained_codex_messages =~ "direct-codex-limit"
+    refute retained_codex_messages =~ "primary"
+    refute retained_codex_messages =~ "credits"
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :malformed,
+         raw: "malformed account telemetry subscription remaining=1 rateLimit reset=soon",
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    running_snapshot = Enum.find(snapshot.running, &(&1.issue_id == issue_id))
+    retained_codex_messages = inspect(running_snapshot.last_codex_message) <> inspect(running_snapshot.codex_transcript)
+
+    assert running_snapshot.last_codex_message.message == "[account telemetry ignored]"
+    refute retained_codex_messages =~ "subscription remaining"
+    refute retained_codex_messages =~ "rateLimit reset"
   end
 
   test "orchestrator token accounting prefers total_token_usage over last_token_usage in token_count payloads" do
@@ -1270,8 +1386,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1298,8 +1413,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1325,7 +1439,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil,
          polling: %{checking?: false, next_poll_in_ms: 2_000, poll_interval_ms: 30_000}
        }}
 
@@ -1339,7 +1452,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil,
          polling: %{checking?: true, next_poll_in_ms: nil, poll_interval_ms: 30_000}
        }}
 
@@ -1353,8 +1465,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1392,8 +1503,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            output_tokens: 12,
            total_tokens: 102,
            seconds_running: 75
-         },
-         rate_limits: nil
+         }
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1408,8 +1518,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1683,7 +1792,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {"item/commandExecution/requestApproval", %{"params" => %{"parsedCmd" => "git status"}}, "command approval requested (git status)"},
       {"item/fileChange/requestApproval", %{"params" => %{"fileChangeCount" => 2}}, "file change approval requested (2 files)"},
       {"item/tool/call", %{"params" => %{"tool" => "linear_graphql"}}, "dynamic tool call requested (linear_graphql)"},
-      {"item/tool/requestUserInput", %{"params" => %{"question" => "Continue?"}}, "tool requires user input: Continue?"}
+      {"item/tool/requestUserInput", %{"params" => %{"question" => "Continue?"}}, "tool requires user input: Continue?"},
+      {"account/rateLimits/updated", %{"params" => %{"rateLimits" => %{"primary" => %{"remaining" => 10}}}}, "account telemetry ignored"}
     ]
 
     Enum.each(event_cases, fn {method, payload, expected_fragment} ->
@@ -1693,6 +1803,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         StatusDashboard.humanize_codex_message(%{event: :notification, message: message})
 
       assert humanized =~ expected_fragment
+      refute humanized =~ "remaining"
     end)
   end
 

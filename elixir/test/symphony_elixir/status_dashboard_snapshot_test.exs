@@ -11,8 +11,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     Snapshot.assert_dashboard_snapshot!("idle", render_snapshot(snapshot_data, 0.0))
@@ -36,8 +35,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
        %{
          running: [],
          retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     Snapshot.assert_dashboard_snapshot!("idle_with_dashboard_url", render_snapshot(snapshot_data, 0.0))
@@ -73,12 +71,6 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            output_tokens: 18_500,
            total_tokens: 268_500,
            seconds_running: 4_321
-         },
-         rate_limits: %{
-           limit_id: "gpt-5",
-           primary: %{remaining: 12_345, limit: 20_000, reset_in_seconds: 30},
-           secondary: %{remaining: 45, limit: 60, reset_in_seconds: 12},
-           credits: %{has_credits: true, balance: 9_876.5}
          }
        }}
 
@@ -97,7 +89,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
              runtime_seconds: 1_225,
              turn_count: 7,
              last_codex_event: :notification,
-             last_codex_message: agent_message_delta("waiting on rate-limit backoff window")
+             last_codex_message: agent_message_delta("waiting on retry backoff window")
            })
          ],
          retrying: [
@@ -105,7 +97,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
              identifier: "MT-450",
              attempt: 4,
              due_in_ms: 1_250,
-             error: "rate limit exhausted"
+             error: "worker exhausted retry budget"
            }),
            retry_entry(%{
              identifier: "MT-451",
@@ -126,13 +118,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
              error: "fourth queued retry should also render after removing the top-three limit"
            })
          ],
-         codex_totals: %{input_tokens: 18_000, output_tokens: 2_200, total_tokens: 20_200, seconds_running: 2_700},
-         rate_limits: %{
-           limit_id: "gpt-5",
-           primary: %{remaining: 0, limit: 20_000, reset_in_seconds: 95},
-           secondary: %{remaining: 0, limit: 60, reset_in_seconds: 45},
-           credits: %{has_credits: false}
-         }
+         codex_totals: %{input_tokens: 18_000, output_tokens: 2_200, total_tokens: 20_200, seconds_running: 2_700}
        }}
 
     Snapshot.assert_dashboard_snapshot!("backoff_queue", render_snapshot(snapshot_data, 15.4))
@@ -151,8 +137,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
              error: "error with \\nnewline"
            })
          ],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
        }}
 
     rendered = render_snapshot(snapshot_data, 0.0)
@@ -166,7 +151,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     refute backoff_line =~ "\\n"
   end
 
-  test "snapshot fixture: unlimited credits variant" do
+  test "snapshot fixture: token usage variant" do
     snapshot_data =
       {:ok,
        %{
@@ -182,16 +167,10 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            })
          ],
          retrying: [],
-         codex_totals: %{input_tokens: 90, output_tokens: 12, total_tokens: 102, seconds_running: 75},
-         rate_limits: %{
-           limit_id: "priority-tier",
-           primary: %{remaining: 100, limit: 100, reset_in_seconds: 1},
-           secondary: %{remaining: 500, limit: 500, reset_in_seconds: 1},
-           credits: %{unlimited: true}
-         }
+         codex_totals: %{input_tokens: 90, output_tokens: 12, total_tokens: 102, seconds_running: 75}
        }}
 
-    Snapshot.assert_dashboard_snapshot!("credits_unlimited", render_snapshot(snapshot_data, 42.0))
+    Snapshot.assert_dashboard_snapshot!("token_usage", render_snapshot(snapshot_data, 42.0))
   end
 
   defp render_snapshot(snapshot_data, tps) do

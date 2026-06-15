@@ -39,8 +39,7 @@ defmodule SymphonyElixir.Orchestrator do
       claimed: MapSet.new(),
       blocked: %{},
       retry_attempts: %{},
-      codex_totals: nil,
-      codex_rate_limits: nil
+      codex_totals: nil
     ]
   end
 
@@ -62,8 +61,7 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
-      codex_totals: @empty_codex_totals,
-      codex_rate_limits: nil
+      codex_totals: @empty_codex_totals
     }
 
     run_terminal_workspace_cleanup()
@@ -171,7 +169,6 @@ defmodule SymphonyElixir.Orchestrator do
         state =
           state
           |> apply_codex_token_delta(token_delta)
-          |> apply_codex_rate_limits(update)
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
@@ -1440,7 +1437,6 @@ defmodule SymphonyElixir.Orchestrator do
        retrying: retrying,
        blocked: blocked,
        codex_totals: state.codex_totals,
-       rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
@@ -1541,10 +1537,120 @@ defmodule SymphonyElixir.Orchestrator do
   defp summarize_codex_update(update) do
     %{
       event: update[:event],
-      message: update[:payload] || update[:raw],
+      message: sanitize_codex_message_for_storage(update[:payload] || update[:raw]),
       timestamp: update[:timestamp]
     }
   end
+
+  defp sanitize_codex_message_for_storage(%{} = message) do
+    method = Map.get(message, "method") || Map.get(message, :method)
+
+    cond do
+      method == "account/rateLimits/updated" ->
+        %{"method" => "account/telemetry/ignored"}
+
+      is_binary(method) and String.starts_with?(method, "account/") ->
+        %{"method" => method}
+
+      usage_window_payload?(message) ->
+        %{"method" => "account/telemetry/ignored"}
+
+      true ->
+        redact_usage_window_fields(message)
+    end
+  end
+
+  defp sanitize_codex_message_for_storage(message) when is_binary(message) do
+    case Jason.decode(message) do
+      {:ok, decoded} ->
+        sanitize_codex_message_for_storage(decoded)
+
+      {:error, _reason} ->
+        if raw_usage_window_message?(message) do
+          "[account telemetry ignored]"
+        else
+          message
+        end
+    end
+  end
+
+  defp sanitize_codex_message_for_storage(message), do: message
+
+  defp redact_usage_window_fields(%{} = payload) do
+    Enum.reduce(payload, %{}, fn {key, value}, acc ->
+      if usage_window_storage_key?(key) do
+        acc
+      else
+        Map.put(acc, key, redact_usage_window_fields(value))
+      end
+    end)
+  end
+
+  defp redact_usage_window_fields(values) when is_list(values),
+    do: Enum.map(values, &redact_usage_window_fields/1)
+
+  defp redact_usage_window_fields(value), do: value
+
+  defp raw_usage_window_message?(message) when is_binary(message) do
+    String.contains?(message, [
+      "account/rateLimits/updated",
+      "rate_limit",
+      "rate_limits",
+      "rateLimit",
+      "rateLimits",
+      "subscription",
+      "usage window",
+      "usage-window"
+    ])
+  end
+
+  defp usage_window_payload?(%{} = payload) do
+    limit_id =
+      Map.get(payload, "limit_id") ||
+        Map.get(payload, :limit_id) ||
+        Map.get(payload, "limit_name") ||
+        Map.get(payload, :limit_name)
+
+    has_usage_bucket =
+      Enum.any?(
+        [
+          "primary",
+          :primary,
+          "secondary",
+          :secondary,
+          "credits",
+          :credits,
+          "rate_limit",
+          :rate_limit,
+          "rate_limits",
+          :rate_limits,
+          "rateLimit",
+          :rateLimit,
+          "rateLimits",
+          :rateLimits
+        ],
+        &Map.has_key?(payload, &1)
+      )
+
+    !is_nil(limit_id) and has_usage_bucket
+  end
+
+  defp usage_window_payload?(_payload), do: false
+
+  defp usage_window_storage_key?(key)
+       when key in [
+              :rate_limit,
+              :rate_limits,
+              :rateLimit,
+              :rateLimits,
+              "rate_limit",
+              "rate_limits",
+              "rateLimit",
+              "rateLimits"
+            ],
+       do: true
+
+  defp usage_window_storage_key?(_key), do: false
 
   defp append_codex_transcript(running_entry, event, timestamp, codex_message) do
     running_entry
@@ -1638,18 +1744,6 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp apply_codex_token_delta(state, _token_delta), do: state
 
-  defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
-    case extract_rate_limits(update) do
-      %{} = rate_limits ->
-        %{state | codex_rate_limits: rate_limits}
-
-      _ ->
-        state
-    end
-  end
-
-  defp apply_codex_rate_limits(state, _update), do: state
-
   defp apply_token_delta(codex_totals, token_delta) do
     input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens
     output_tokens = Map.get(codex_totals, :output_tokens, 0) + token_delta.output_tokens
@@ -1735,15 +1829,6 @@ defmodule SymphonyElixir.Orchestrator do
       %{}
   end
 
-  defp extract_rate_limits(update) do
-    rate_limits_from_payload(update[:rate_limits]) ||
-      rate_limits_from_payload(Map.get(update, "rate_limits")) ||
-      rate_limits_from_payload(Map.get(update, :rate_limits)) ||
-      rate_limits_from_payload(update[:payload]) ||
-      rate_limits_from_payload(Map.get(update, "payload")) ||
-      rate_limits_from_payload(update)
-  end
-
   defp absolute_token_usage_from_payload(payload) when is_map(payload) do
     absolute_paths = [
       ["params", "msg", "payload", "info", "total_token_usage"],
@@ -1776,73 +1861,6 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp turn_completed_usage_from_payload(_payload), do: nil
-
-  defp rate_limits_from_payload(payload) when is_map(payload) do
-    direct = Map.get(payload, "rate_limits") || Map.get(payload, :rate_limits)
-
-    cond do
-      rate_limits_map?(direct) ->
-        direct
-
-      rate_limits_map?(payload) ->
-        payload
-
-      true ->
-        rate_limit_payloads(payload)
-    end
-  end
-
-  defp rate_limits_from_payload(payload) when is_list(payload) do
-    rate_limit_payloads(payload)
-  end
-
-  defp rate_limits_from_payload(_payload), do: nil
-
-  defp rate_limit_payloads(payload) when is_map(payload) do
-    Map.values(payload)
-    |> Enum.reduce_while(nil, fn
-      value, nil ->
-        case rate_limits_from_payload(value) do
-          nil -> {:cont, nil}
-          rate_limits -> {:halt, rate_limits}
-        end
-
-      _value, result ->
-        {:halt, result}
-    end)
-  end
-
-  defp rate_limit_payloads(payload) when is_list(payload) do
-    payload
-    |> Enum.reduce_while(nil, fn
-      value, nil ->
-        case rate_limits_from_payload(value) do
-          nil -> {:cont, nil}
-          rate_limits -> {:halt, rate_limits}
-        end
-
-      _value, result ->
-        {:halt, result}
-    end)
-  end
-
-  defp rate_limits_map?(payload) when is_map(payload) do
-    limit_id =
-      Map.get(payload, "limit_id") ||
-        Map.get(payload, :limit_id) ||
-        Map.get(payload, "limit_name") ||
-        Map.get(payload, :limit_name)
-
-    has_buckets =
-      Enum.any?(
-        ["primary", :primary, "secondary", :secondary, "credits", :credits],
-        &Map.has_key?(payload, &1)
-      )
-
-    !is_nil(limit_id) and has_buckets
-  end
-
-  defp rate_limits_map?(_payload), do: false
 
   defp explicit_map_at_paths(payload, paths) when is_map(payload) and is_list(paths) do
     Enum.find_value(paths, fn path ->

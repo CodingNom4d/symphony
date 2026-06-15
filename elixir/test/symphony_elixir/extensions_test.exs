@@ -360,6 +360,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "transcript" => [
                    %{
                      "at" => state_payload["running"] |> List.first() |> Map.fetch!("transcript") |> List.first() |> Map.fetch!("at"),
+                     "event" => "notification",
+                     "summary" => "account telemetry ignored",
+                     "role" => "system"
+                   },
+                   %{
+                     "at" => state_payload["running"] |> List.first() |> Map.fetch!("transcript") |> List.last() |> Map.fetch!("at"),
                      "event" => "agent_message",
                      "summary" => "hello from codex",
                      "role" => "agent"
@@ -409,8 +415,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "output_tokens" => 8,
                "total_tokens" => 12,
                "seconds_running" => 42.5
-             },
-             "rate_limits" => %{"primary" => %{"remaining" => 11}}
+             }
            }
 
     conn = get(build_conn(), "/api/v1/MT-HTTP")
@@ -438,6 +443,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "transcript" => [
                  %{
                    "at" => issue_payload["running"]["transcript"] |> List.first() |> Map.fetch!("at"),
+                   "event" => "notification",
+                   "summary" => "account telemetry ignored",
+                   "role" => "system"
+                 },
+                 %{
+                   "at" => issue_payload["running"]["transcript"] |> List.last() |> Map.fetch!("at"),
                    "event" => "agent_message",
                    "summary" => "hello from codex",
                    "role" => "agent"
@@ -451,6 +462,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "codex_session_logs" => [
                  %{
                    "at" => issue_payload["logs"]["codex_session_logs"] |> List.first() |> Map.fetch!("at"),
+                   "event" => "notification",
+                   "summary" => "account telemetry ignored",
+                   "role" => "system"
+                 },
+                 %{
+                   "at" => issue_payload["logs"]["codex_session_logs"] |> List.last() |> Map.fetch!("at"),
                    "event" => "agent_message",
                    "summary" => "hello from codex",
                    "role" => "agent"
@@ -460,6 +477,11 @@ defmodule SymphonyElixir.ExtensionsTest do
              "recent_events" => [
                %{
                  "at" => issue_payload["recent_events"] |> List.first() |> Map.fetch!("at"),
+                 "event" => "notification",
+                 "message" => "account telemetry ignored"
+               },
+               %{
+                 "at" => issue_payload["recent_events"] |> List.last() |> Map.fetch!("at"),
                  "event" => "agent_message",
                  "message" => "hello from codex"
                }
@@ -892,6 +914,15 @@ defmodule SymphonyElixir.ExtensionsTest do
               event: :notification,
               message: %{
                 event: :notification,
+                message: %{"method" => "account/telemetry/ignored"},
+                timestamp: DateTime.utc_now()
+              },
+              timestamp: DateTime.utc_now()
+            },
+            %{
+              event: :notification,
+              message: %{
+                event: :notification,
                 message: %{
                   "method" => "codex/event/agent_message_content_delta",
                   "params" => %{"msg" => %{"content" => "hello from codex"}}
@@ -948,8 +979,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           ]
         }
       ],
-      codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
-      rate_limits: %{"primary" => %{"remaining" => 11}}
+      codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5}
     }
   end
 

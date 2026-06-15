@@ -270,7 +270,6 @@ Fields:
 - `retry_attempts` (map `issue_id -> RetryEntry`)
 - `completed` (set of issue IDs; bookkeeping only, not dispatch gating)
 - `codex_totals` (aggregate tokens + runtime seconds)
-- `codex_rate_limits` (latest rate-limit snapshot from agent events)
 
 ### 4.2 Stable Identifiers and Normalization Rules
 
@@ -680,7 +679,7 @@ Distinct terminal reasons are important because retry logic and logs differ.
   - Schedule exponential-backoff retry.
 
 - `Codex Update Event`
-  - Update live session fields, token counters, and rate limits.
+  - Update live session fields and token counters.
 
 - `Retry Timer Fired`
   - Re-fetch active candidates and attempt re-dispatch, or release claim if no longer eligible.
@@ -1300,7 +1299,6 @@ SHOULD return:
   - `output_tokens`
   - `total_tokens`
   - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
-- `rate_limits` (latest coding-agent rate limit payload, if available)
 
 RECOMMENDED snapshot error modes:
 
@@ -1341,10 +1339,14 @@ Runtime accounting:
   or cancellation/termination).
 - Continuous background ticking of runtime totals is not REQUIRED.
 
-Rate-limit tracking:
+Subscription usage-window tracking:
 
-- Track the latest rate-limit payload seen in any agent update.
-- Any human-readable presentation of rate-limit data is implementation-defined.
+- Symphony MUST NOT make dispatch, pause, resume, or retry decisions from coding-agent
+  subscription/rate-limit telemetry.
+- Subscription usage-window monitoring and any decision to pause or stop Symphony are external
+  operator/orchestrator responsibilities.
+- Symphony MAY retain passive token/runtime accounting for observability, but MUST NOT expose
+  upstream subscription rate-limit snapshots as an orchestration control surface.
 
 ### 13.6 Humanized Agent Event Summaries (OPTIONAL)
 
@@ -1400,7 +1402,7 @@ Minimum endpoints:
 
 - `GET /api/v1/state`
   - Returns a summary view of the current system state (running sessions, retry queue/delays,
-    aggregate token/runtime totals, latest rate limits, and any additional tracked summary fields).
+    aggregate token/runtime totals, and any additional tracked summary fields).
   - Suggested response shape:
 
     ```json
@@ -1444,8 +1446,7 @@ Minimum endpoints:
         "output_tokens": 2400,
         "total_tokens": 7400,
         "seconds_running": 1834.2
-      },
-      "rate_limits": null
+      }
     }
     ```
 
@@ -1706,8 +1707,7 @@ function start_service():
     claimed: set(),
     retry_attempts: {},
     completed: set(),
-    codex_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-    codex_rate_limits: null
+    codex_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
   }
 
   validation = validate_dispatch_config()
@@ -2007,8 +2007,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason
-- If a snapshot API is implemented, it returns running rows, retry rows, token totals, and rate
-  limits
+- If a snapshot API is implemented, it returns running rows, retry rows, token totals, and omits
+  upstream subscription/rate-limit telemetry
 - If a snapshot API is implemented, timeout/unavailable cases are surfaced
 
 ### 17.5 Coding-Agent App-Server Client
@@ -2028,8 +2028,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Unsupported dynamic tool calls are rejected without stalling the session
 - User input requests are handled according to the implementation's documented policy and do not
   stall indefinitely
-- Usage and rate-limit telemetry exposed by the targeted protocol is extracted
-- Approval, user-input-required, usage, and rate-limit signals are interpreted according to the
+- Usage telemetry exposed by the targeted protocol is extracted
+- Approval, user-input-required, and usage signals are interpreted according to the
   targeted protocol
 - If client-side tools are implemented, session startup advertises the supported tool specs
   using the targeted app-server protocol
@@ -2045,7 +2045,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Validation failures are operator-visible
 - Structured logging includes issue/session context fields
 - Logging sink failures do not crash orchestration
-- Token/rate-limit aggregation remains correct across repeated agent updates
+- Token aggregation remains correct across repeated agent updates
+- Upstream subscription/rate-limit telemetry is ignored by Symphony; external orchestration owns
+  usage-window monitoring and stop/resume decisions.
 - If a human-readable status surface is implemented, it is driven from orchestrator state and does
   not affect correctness
 - If humanized event summaries are implemented, they cover key wrapper/agent event classes without
