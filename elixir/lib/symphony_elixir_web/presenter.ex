@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard, WorkEfficiency}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -22,6 +22,7 @@ defmodule SymphonyElixirWeb.Presenter do
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
           blocked: Enum.map(Map.get(snapshot, :blocked, []), &blocked_entry_payload/1),
           codex_totals: snapshot.codex_totals,
+          work_efficiency: Map.get(snapshot, :work_efficiency),
           rate_limits: snapshot.rate_limits
         }
 
@@ -79,6 +80,7 @@ defmodule SymphonyElixirWeb.Presenter do
       running: running && running_issue_payload(running),
       retry: retry && retry_issue_payload(retry),
       blocked: blocked && blocked_issue_payload(blocked),
+      work_efficiency: issue_work_efficiency(running, retry, blocked),
       logs: %{
         codex_session_logs: []
       },
@@ -90,6 +92,8 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp issue_id_from_entries(running, retry, blocked),
     do: (running && running.issue_id) || (retry && retry.issue_id) || (blocked && blocked.issue_id)
+
+  defp issue_work_efficiency(running, retry, blocked), do: WorkEfficiency.entry(running || retry || blocked)
 
   defp restart_count(retry), do: max(retry_attempt(retry) - 1, 0)
   defp retry_attempt(nil), do: 0
@@ -138,8 +142,8 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
-      issue_url: Map.get(entry, :issue_url),
-      state: entry.state,
+      issue_url: blocked_issue_url(entry),
+      state: blocked_issue_state(entry),
       error: entry.error,
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
@@ -185,7 +189,7 @@ defmodule SymphonyElixirWeb.Presenter do
       worker_host: Map.get(blocked, :worker_host),
       workspace_path: Map.get(blocked, :workspace_path),
       session_id: blocked.session_id,
-      state: blocked.state,
+      state: blocked_issue_state(blocked),
       error: blocked.error,
       blocked_at: iso8601(blocked.blocked_at),
       last_event: blocked.last_codex_event,
@@ -206,6 +210,15 @@ defmodule SymphonyElixirWeb.Presenter do
       (retry && Map.get(retry, :worker_host)) ||
       (blocked && Map.get(blocked, :worker_host))
   end
+
+  defp blocked_issue_state(%{state: state}) when is_binary(state), do: state
+  defp blocked_issue_state(%{state: state}) when is_atom(state), do: state
+  defp blocked_issue_state(%{issue: %{state: state}}), do: state
+  defp blocked_issue_state(_blocked), do: nil
+
+  defp blocked_issue_url(%{issue_url: issue_url}) when is_binary(issue_url), do: issue_url
+  defp blocked_issue_url(%{issue: %{url: issue_url}}), do: issue_url
+  defp blocked_issue_url(_blocked), do: nil
 
   defp recent_events_payload(nil), do: []
 

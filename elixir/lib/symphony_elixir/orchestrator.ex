@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, WorkEfficiency, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -20,6 +20,7 @@ defmodule SymphonyElixir.Orchestrator do
     total_tokens: 0,
     seconds_running: 0
   }
+  @empty_work_totals WorkEfficiency.empty_totals()
 
   defmodule State do
     @moduledoc """
@@ -39,6 +40,7 @@ defmodule SymphonyElixir.Orchestrator do
       blocked: %{},
       retry_attempts: %{},
       codex_totals: nil,
+      work_totals: nil,
       codex_rate_limits: nil
     ]
   end
@@ -62,6 +64,7 @@ defmodule SymphonyElixir.Orchestrator do
       tick_timer_ref: nil,
       tick_token: nil,
       codex_totals: @empty_codex_totals,
+      work_totals: @empty_work_totals,
       codex_rate_limits: nil
     }
 
@@ -165,11 +168,12 @@ defmodule SymphonyElixir.Orchestrator do
         {:noreply, state}
 
       running_entry ->
-        {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
+        {updated_running_entry, token_delta, work_delta} = integrate_codex_update(running_entry, update)
 
         state =
           state
           |> apply_codex_token_delta(token_delta)
+          |> apply_work_delta(work_delta)
           |> apply_codex_rate_limits(update)
 
         notify_dashboard()
@@ -205,13 +209,13 @@ defmodule SymphonyElixir.Orchestrator do
 
       state
       |> complete_issue(issue_id)
-      |> schedule_issue_retry(issue_id, 1, %{
-        identifier: running_entry.identifier,
-        issue_url: running_entry.issue.url,
-        delay_type: :continuation,
-        worker_host: Map.get(running_entry, :worker_host),
-        workspace_path: Map.get(running_entry, :workspace_path)
-      })
+      |> schedule_issue_retry(
+        issue_id,
+        1,
+        running_entry
+        |> retry_metadata_from_running_entry()
+        |> Map.merge(%{delay_type: :continuation})
+      )
     end
   end
 
@@ -236,13 +240,14 @@ defmodule SymphonyElixir.Orchestrator do
 
     next_attempt = next_retry_attempt_from_running(running_entry)
 
-    schedule_issue_retry(state, issue_id, next_attempt, %{
-      identifier: running_entry.identifier,
-      issue_url: running_entry.issue.url,
-      error: "agent exited: #{inspect(reason)}",
-      worker_host: Map.get(running_entry, :worker_host),
-      workspace_path: Map.get(running_entry, :workspace_path)
-    })
+    schedule_issue_retry(
+      state,
+      issue_id,
+      next_attempt,
+      running_entry
+      |> retry_metadata_from_running_entry()
+      |> Map.merge(%{error: "agent exited: #{inspect(reason)}"})
+    )
   end
 
   defp maybe_dispatch(%State{} = state) do
@@ -623,7 +628,16 @@ defmodule SymphonyElixir.Orchestrator do
         |> schedule_issue_retry(issue_id, next_attempt, %{
           identifier: identifier,
           issue_url: running_entry.issue.url,
-          error: "stalled for #{elapsed_ms}ms without codex activity"
+          error: "stalled for #{elapsed_ms}ms without codex activity",
+          worker_host: Map.get(running_entry, :worker_host),
+          workspace_path: Map.get(running_entry, :workspace_path),
+          codex_input_tokens: Map.get(running_entry, :codex_input_tokens, 0),
+          codex_output_tokens: Map.get(running_entry, :codex_output_tokens, 0),
+          codex_total_tokens: Map.get(running_entry, :codex_total_tokens, 0),
+          completed_diff_lines: Map.get(running_entry, :completed_diff_lines, 0),
+          current_turn_diff_lines: Map.get(running_entry, :current_turn_diff_lines, 0),
+          productive_turns: Map.get(running_entry, :productive_turns, 0),
+          unproductive_turns: Map.get(running_entry, :unproductive_turns, 0)
         })
       end
     else
@@ -743,15 +757,26 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_issue_from_entry(%State{} = state, issue_id, running_entry, error) do
+    issue = Map.get(running_entry, :issue)
+
     blocked_entry = %{
       issue_id: issue_id,
       identifier: Map.get(running_entry, :identifier, issue_id),
-      issue: Map.get(running_entry, :issue),
+      issue: issue,
+      issue_url: Map.get(running_entry, :issue_url) || (issue && issue.url),
+      state: Map.get(running_entry, :state) || (issue && issue.state),
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path),
       session_id: running_entry_session_id(running_entry),
       error: error,
       blocked_at: DateTime.utc_now(),
+      codex_input_tokens: Map.get(running_entry, :codex_input_tokens, 0),
+      codex_output_tokens: Map.get(running_entry, :codex_output_tokens, 0),
+      codex_total_tokens: Map.get(running_entry, :codex_total_tokens, 0),
+      completed_diff_lines: Map.get(running_entry, :completed_diff_lines, 0),
+      current_turn_diff_lines: Map.get(running_entry, :current_turn_diff_lines, 0),
+      productive_turns: Map.get(running_entry, :productive_turns, 0),
+      unproductive_turns: Map.get(running_entry, :unproductive_turns, 0),
       last_codex_message: Map.get(running_entry, :last_codex_message),
       last_codex_event: Map.get(running_entry, :last_codex_event),
       last_codex_timestamp: Map.get(running_entry, :last_codex_timestamp)
@@ -967,6 +992,11 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_input_tokens: 0,
             codex_last_reported_output_tokens: 0,
             codex_last_reported_total_tokens: 0,
+            completed_diff_lines: 0,
+            current_turn_diff_lines: 0,
+            current_turn_completed: false,
+            productive_turns: 0,
+            unproductive_turns: 0,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
             started_at: DateTime.utc_now()
@@ -1033,6 +1063,13 @@ defmodule SymphonyElixir.Orchestrator do
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    codex_input_tokens = pick_retry_count(previous_retry, metadata, :codex_input_tokens)
+    codex_output_tokens = pick_retry_count(previous_retry, metadata, :codex_output_tokens)
+    codex_total_tokens = pick_retry_count(previous_retry, metadata, :codex_total_tokens)
+    completed_diff_lines = pick_retry_count(previous_retry, metadata, :completed_diff_lines)
+    current_turn_diff_lines = pick_retry_count(previous_retry, metadata, :current_turn_diff_lines)
+    productive_turns = pick_retry_count(previous_retry, metadata, :productive_turns)
+    unproductive_turns = pick_retry_count(previous_retry, metadata, :unproductive_turns)
 
     if is_reference(old_timer) do
       Process.cancel_timer(old_timer)
@@ -1056,7 +1093,14 @@ defmodule SymphonyElixir.Orchestrator do
             issue_url: issue_url,
             error: error,
             worker_host: worker_host,
-            workspace_path: workspace_path
+            workspace_path: workspace_path,
+            codex_input_tokens: codex_input_tokens,
+            codex_output_tokens: codex_output_tokens,
+            codex_total_tokens: codex_total_tokens,
+            completed_diff_lines: completed_diff_lines,
+            current_turn_diff_lines: current_turn_diff_lines,
+            productive_turns: productive_turns,
+            unproductive_turns: unproductive_turns
           })
     }
   end
@@ -1069,7 +1113,14 @@ defmodule SymphonyElixir.Orchestrator do
           issue_url: Map.get(retry_entry, :issue_url),
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
-          workspace_path: Map.get(retry_entry, :workspace_path)
+          workspace_path: Map.get(retry_entry, :workspace_path),
+          codex_input_tokens: Map.get(retry_entry, :codex_input_tokens, 0),
+          codex_output_tokens: Map.get(retry_entry, :codex_output_tokens, 0),
+          codex_total_tokens: Map.get(retry_entry, :codex_total_tokens, 0),
+          completed_diff_lines: Map.get(retry_entry, :completed_diff_lines, 0),
+          current_turn_diff_lines: Map.get(retry_entry, :current_turn_diff_lines, 0),
+          productive_turns: Map.get(retry_entry, :productive_turns, 0),
+          unproductive_turns: Map.get(retry_entry, :unproductive_turns, 0)
         }
 
         {:ok, attempt, metadata, %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}}
@@ -1232,6 +1283,33 @@ defmodule SymphonyElixir.Orchestrator do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)
   end
 
+  defp pick_retry_count(previous_retry, metadata, key) do
+    metadata_value = Map.get(metadata, key)
+    previous_value = Map.get(previous_retry, key)
+
+    cond do
+      is_integer(metadata_value) -> metadata_value
+      is_integer(previous_value) -> previous_value
+      true -> 0
+    end
+  end
+
+  defp retry_metadata_from_running_entry(running_entry) do
+    %{
+      identifier: running_entry.identifier,
+      issue_url: running_entry.issue.url,
+      worker_host: Map.get(running_entry, :worker_host),
+      workspace_path: Map.get(running_entry, :workspace_path),
+      codex_input_tokens: Map.get(running_entry, :codex_input_tokens, 0),
+      codex_output_tokens: Map.get(running_entry, :codex_output_tokens, 0),
+      codex_total_tokens: Map.get(running_entry, :codex_total_tokens, 0),
+      completed_diff_lines: Map.get(running_entry, :completed_diff_lines, 0),
+      current_turn_diff_lines: Map.get(running_entry, :current_turn_diff_lines, 0),
+      productive_turns: Map.get(running_entry, :productive_turns, 0),
+      unproductive_turns: Map.get(running_entry, :unproductive_turns, 0)
+    }
+  end
+
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
 
   defp maybe_put_runtime_value(running_entry, key, value) when is_map(running_entry) do
@@ -1386,6 +1464,10 @@ defmodule SymphonyElixir.Orchestrator do
           codex_input_tokens: metadata.codex_input_tokens,
           codex_output_tokens: metadata.codex_output_tokens,
           codex_total_tokens: metadata.codex_total_tokens,
+          completed_diff_lines: Map.get(metadata, :completed_diff_lines, 0),
+          current_turn_diff_lines: Map.get(metadata, :current_turn_diff_lines, 0),
+          productive_turns: Map.get(metadata, :productive_turns, 0),
+          unproductive_turns: Map.get(metadata, :unproductive_turns, 0),
           turn_count: Map.get(metadata, :turn_count, 0),
           started_at: metadata.started_at,
           last_codex_timestamp: metadata.last_codex_timestamp,
@@ -1406,7 +1488,14 @@ defmodule SymphonyElixir.Orchestrator do
           issue_url: Map.get(retry, :issue_url),
           error: Map.get(retry, :error),
           worker_host: Map.get(retry, :worker_host),
-          workspace_path: Map.get(retry, :workspace_path)
+          workspace_path: Map.get(retry, :workspace_path),
+          codex_input_tokens: Map.get(retry, :codex_input_tokens, 0),
+          codex_output_tokens: Map.get(retry, :codex_output_tokens, 0),
+          codex_total_tokens: Map.get(retry, :codex_total_tokens, 0),
+          completed_diff_lines: Map.get(retry, :completed_diff_lines, 0),
+          current_turn_diff_lines: Map.get(retry, :current_turn_diff_lines, 0),
+          productive_turns: Map.get(retry, :productive_turns, 0),
+          unproductive_turns: Map.get(retry, :unproductive_turns, 0)
         }
       end)
 
@@ -1423,6 +1512,13 @@ defmodule SymphonyElixir.Orchestrator do
           session_id: Map.get(metadata, :session_id),
           error: Map.get(metadata, :error),
           blocked_at: Map.get(metadata, :blocked_at),
+          codex_input_tokens: Map.get(metadata, :codex_input_tokens, 0),
+          codex_output_tokens: Map.get(metadata, :codex_output_tokens, 0),
+          codex_total_tokens: Map.get(metadata, :codex_total_tokens, 0),
+          completed_diff_lines: Map.get(metadata, :completed_diff_lines, 0),
+          current_turn_diff_lines: Map.get(metadata, :current_turn_diff_lines, 0),
+          productive_turns: Map.get(metadata, :productive_turns, 0),
+          unproductive_turns: Map.get(metadata, :unproductive_turns, 0),
           last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
           last_codex_message: Map.get(metadata, :last_codex_message),
           last_codex_event: Map.get(metadata, :last_codex_event)
@@ -1435,6 +1531,7 @@ defmodule SymphonyElixir.Orchestrator do
        retrying: retrying,
        blocked: blocked,
        codex_totals: state.codex_totals,
+       work_efficiency: WorkEfficiency.aggregate(state.work_totals, Map.get(state.codex_totals, :total_tokens)),
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
          checking?: state.poll_check_in_progress == true,
@@ -1459,13 +1556,21 @@ defmodule SymphonyElixir.Orchestrator do
      }, state}
   end
 
+  defp blocked_issue_state(%{state: state}) when is_binary(state), do: state
+  defp blocked_issue_state(%{state: state}) when is_atom(state), do: state
   defp blocked_issue_state(%{issue: %Issue{state: state}}), do: state
   defp blocked_issue_state(_metadata), do: nil
 
+  defp blocked_issue_url(%{issue_url: url}) when is_binary(url), do: url
   defp blocked_issue_url(%{issue: %Issue{url: url}}), do: url
   defp blocked_issue_url(_metadata), do: nil
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
+    running_entry =
+      running_entry
+      |> initialize_work_tracking()
+      |> maybe_reset_current_turn_diff_lines(update)
+
     token_delta = extract_token_delta(running_entry, update)
     codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
     codex_output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
@@ -1475,6 +1580,10 @@ defmodule SymphonyElixir.Orchestrator do
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
+    work_delta = extract_work_delta(running_entry, update)
+    completed_diff_lines = Map.get(running_entry, :completed_diff_lines, 0)
+    productive_turns = Map.get(running_entry, :productive_turns, 0)
+    unproductive_turns = Map.get(running_entry, :unproductive_turns, 0)
 
     {
       Map.merge(running_entry, %{
@@ -1489,11 +1598,46 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
+        completed_diff_lines: completed_diff_lines + work_delta.completed_diff_lines,
+        current_turn_diff_lines: current_turn_diff_lines_for_update(running_entry, update),
+        current_turn_completed: current_turn_completed_for_update(running_entry, update),
+        last_completed_turn_marker: last_completed_turn_marker_for_update(running_entry, update),
+        productive_turns: productive_turns + work_delta.productive_turns,
+        unproductive_turns: unproductive_turns + work_delta.unproductive_turns,
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
       }),
-      token_delta
+      token_delta,
+      work_delta
     }
   end
+
+  defp initialize_work_tracking(running_entry) when is_map(running_entry) do
+    running_entry
+    |> Map.put_new(:completed_diff_lines, 0)
+    |> Map.put_new(:current_turn_diff_lines, 0)
+    |> Map.put_new(:current_turn_completed, false)
+    |> Map.put_new(:current_turn_marker, Map.get(running_entry, :session_id))
+    |> Map.put_new(:current_turn_started_at, nil)
+    |> Map.put_new(:last_completed_turn_marker, nil)
+    |> Map.put_new(:productive_turns, 0)
+    |> Map.put_new(:unproductive_turns, 0)
+  end
+
+  defp initialize_work_tracking(running_entry), do: running_entry
+
+  defp maybe_reset_current_turn_diff_lines(running_entry, update) when is_map(running_entry) do
+    if new_turn_session_started?(running_entry.session_id, update) do
+      running_entry
+      |> Map.put(:current_turn_diff_lines, 0)
+      |> Map.put(:current_turn_completed, false)
+      |> Map.put(:current_turn_marker, current_turn_marker_from_update(update))
+      |> Map.put(:current_turn_started_at, current_turn_started_at_from_update(update))
+    else
+      running_entry
+    end
+  end
+
+  defp maybe_reset_current_turn_diff_lines(running_entry, _update), do: running_entry
 
   defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})
        when is_binary(pid),
@@ -1538,6 +1682,205 @@ defmodule SymphonyElixir.Orchestrator do
       timestamp: update[:timestamp]
     }
   end
+
+  defp current_turn_diff_lines_for_update(running_entry, update) do
+    cond do
+      current_turn_completion_update?(running_entry, update) ->
+        0
+
+      current_turn_diff_update?(running_entry, update) ->
+        max(Map.get(running_entry, :current_turn_diff_lines, 0), diff_line_count(update))
+
+      true ->
+        Map.get(running_entry, :current_turn_diff_lines, 0)
+    end
+  end
+
+  defp current_turn_completed_for_update(running_entry, update) do
+    if current_turn_completion_update?(running_entry, update) do
+      true
+    else
+      Map.get(running_entry, :current_turn_completed, false)
+    end
+  end
+
+  defp extract_work_delta(running_entry, update) do
+    if recordable_turn_completion?(running_entry, update) do
+      running_entry
+      |> Map.get(:current_turn_diff_lines, 0)
+      |> work_delta_for_completed_diff_lines()
+    else
+      WorkEfficiency.empty_totals()
+    end
+  end
+
+  defp recordable_turn_completion?(running_entry, update) do
+    current_turn_completion_update?(running_entry, update) and
+      !completed_turn_already_recorded?(running_entry, update)
+  end
+
+  defp work_delta_for_completed_diff_lines(completed_diff_lines) when completed_diff_lines > 0 do
+    %{completed_diff_lines: completed_diff_lines, productive_turns: 1, unproductive_turns: 0}
+  end
+
+  defp work_delta_for_completed_diff_lines(_completed_diff_lines) do
+    %{completed_diff_lines: 0, productive_turns: 0, unproductive_turns: 1}
+  end
+
+  defp completed_turn_update?(update) do
+    turn_completed_event?(update) and completed_turn_status?(update)
+  end
+
+  defp current_turn_completion_update?(running_entry, update) do
+    completed_turn_update?(update) and completion_matches_current_turn?(running_entry, update)
+  end
+
+  defp completion_matches_current_turn?(running_entry, update) do
+    current_turn_marker = Map.get(running_entry, :current_turn_marker)
+    update_turn_marker = explicit_turn_marker_from_update(update)
+
+    if is_binary(update_turn_marker) and is_binary(current_turn_marker) do
+      update_turn_marker == current_turn_marker and
+        !stale_turn_completion_for_boundary?(running_entry, update)
+    else
+      !stale_turn_completion_for_boundary?(running_entry, update)
+    end
+  end
+
+  defp stale_turn_completion_for_boundary?(running_entry, %{timestamp: %DateTime{} = timestamp}) do
+    case Map.get(running_entry, :current_turn_started_at) do
+      %DateTime{} = current_turn_started_at ->
+        DateTime.compare(timestamp, current_turn_started_at) == :lt
+
+      _ ->
+        false
+    end
+  end
+
+  defp stale_turn_completion_for_boundary?(_running_entry, _update), do: false
+
+  defp completed_turn_already_recorded?(running_entry, update) do
+    current_turn_completed = Map.get(running_entry, :current_turn_completed, false)
+    completed_turn_marker = completed_turn_marker(running_entry, update)
+    last_completed_turn_marker = Map.get(running_entry, :last_completed_turn_marker)
+
+    current_turn_completed or
+      (is_binary(completed_turn_marker) and completed_turn_marker == last_completed_turn_marker)
+  end
+
+  defp last_completed_turn_marker_for_update(running_entry, update) do
+    if current_turn_completion_update?(running_entry, update) and
+         !completed_turn_already_recorded?(running_entry, update) do
+      completed_turn_marker(running_entry, update)
+    else
+      Map.get(running_entry, :last_completed_turn_marker)
+    end
+  end
+
+  defp completed_turn_marker(running_entry, update) do
+    turn_marker_from_update(update) || Map.get(running_entry, :current_turn_marker)
+  end
+
+  defp explicit_turn_marker_from_update(update), do: turn_marker_from_update(update)
+
+  defp turn_completed_event?(update) do
+    update[:event] == :turn_completed or codex_update_method(update) == "turn/completed"
+  end
+
+  defp current_turn_diff_update?(running_entry, update) do
+    is_integer(diff_line_count(update)) and update_matches_current_turn?(running_entry, update)
+  end
+
+  defp update_matches_current_turn?(running_entry, update) do
+    current_turn_marker = Map.get(running_entry, :current_turn_marker)
+    update_marker = explicit_turn_marker_from_update(update)
+
+    cond do
+      is_binary(update_marker) and is_binary(current_turn_marker) ->
+        update_marker == current_turn_marker
+
+      is_binary(update_marker) ->
+        true
+
+      true ->
+        !stale_turn_completion_for_boundary?(running_entry, update)
+    end
+  end
+
+  defp completed_turn_status?(update) do
+    case turn_completion_status(update) do
+      nil -> true
+      status when status in ["completed", :completed] -> true
+      _ -> false
+    end
+  end
+
+  defp turn_completion_status(update) do
+    update
+    |> codex_update_payload()
+    |> fetch_nested([:params, :turn, :status], ["params", "turn", "status"])
+  end
+
+  defp new_turn_session_started?(existing_session_id, %{event: :session_started, session_id: session_id})
+       when is_binary(session_id) do
+    session_id != existing_session_id
+  end
+
+  defp new_turn_session_started?(_existing_session_id, _update), do: false
+
+  defp current_turn_marker_from_update(update) do
+    turn_marker_from_update(update) || session_id_from_update(update)
+  end
+
+  defp current_turn_started_at_from_update(%{timestamp: %DateTime{} = timestamp}), do: timestamp
+  defp current_turn_started_at_from_update(_update), do: nil
+
+  defp turn_marker_from_update(update) do
+    turn_id_from_update(update) || session_id_from_update(update)
+  end
+
+  defp turn_id_from_update(update) do
+    update
+    |> codex_update_payload()
+    |> fetch_nested([:params, :turn, :id], ["params", "turn", "id"])
+    |> case do
+      turn_id when is_binary(turn_id) and turn_id != "" -> turn_id
+      _ -> update[:turn_id]
+    end
+  end
+
+  defp session_id_from_update(%{session_id: session_id}) when is_binary(session_id) and session_id != "",
+    do: session_id
+
+  defp session_id_from_update(_update), do: nil
+
+  defp diff_line_count(update) do
+    if codex_update_method(update) == "turn/diff/updated" do
+      update
+      |> codex_update_payload()
+      |> fetch_nested([:params, :diff], ["params", "diff"])
+      |> count_non_empty_diff_lines()
+    end
+  end
+
+  defp codex_update_method(%{payload: payload}) when is_map(payload), do: codex_message_method(payload)
+  defp codex_update_method(update) when is_map(update), do: codex_message_method(update)
+
+  defp codex_update_payload(%{payload: payload}) when is_map(payload), do: payload
+  defp codex_update_payload(update) when is_map(update), do: update
+
+  defp fetch_nested(payload, atom_path, string_path) when is_map(payload) do
+    get_in(payload, atom_path) || get_in(payload, string_path)
+  end
+
+  defp count_non_empty_diff_lines(diff) when is_binary(diff) do
+    diff
+    |> String.split(~r/\r\n|\r|\n/)
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> length()
+  end
+
+  defp count_non_empty_diff_lines(_diff), do: nil
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do
     if is_reference(state.tick_timer_ref) do
@@ -1618,6 +1961,22 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp apply_codex_token_delta(state, _token_delta), do: state
 
+  defp apply_work_delta(
+         %{work_totals: work_totals} = state,
+         %{
+           completed_diff_lines: completed_diff_lines,
+           productive_turns: productive_turns,
+           unproductive_turns: unproductive_turns
+         }
+       )
+       when is_integer(completed_diff_lines) and is_integer(productive_turns) and
+              is_integer(unproductive_turns) do
+    work_totals = add_work_totals(work_totals, completed_diff_lines, productive_turns, unproductive_turns)
+    %{state | work_totals: work_totals}
+  end
+
+  defp apply_work_delta(state, _work_delta), do: state
+
   defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
     case extract_rate_limits(update) do
       %{} = rate_limits ->
@@ -1643,6 +2002,16 @@ defmodule SymphonyElixir.Orchestrator do
       output_tokens: max(0, output_tokens),
       total_tokens: max(0, total_tokens),
       seconds_running: max(0, seconds_running)
+    }
+  end
+
+  defp add_work_totals(work_totals, completed_diff_lines, productive_turns, unproductive_turns) do
+    work_totals = work_totals || WorkEfficiency.empty_totals()
+
+    %{
+      completed_diff_lines: max(0, Map.get(work_totals, :completed_diff_lines, 0) + completed_diff_lines),
+      productive_turns: max(0, Map.get(work_totals, :productive_turns, 0) + productive_turns),
+      unproductive_turns: max(0, Map.get(work_totals, :unproductive_turns, 0) + unproductive_turns)
     }
   end
 

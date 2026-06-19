@@ -394,6 +394,14 @@ defmodule SymphonyElixir.ExtensionsTest do
                "total_tokens" => 12,
                "seconds_running" => 42.5
              },
+             "work_efficiency" => %{
+               "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+               "completed_diff_lines" => 6,
+               "productive_turns" => 2,
+               "unproductive_turns" => 1,
+               "total_tokens" => 12,
+               "diff_lines_per_1k_tokens" => 500.0
+             },
              "rate_limits" => %{"primary" => %{"remaining" => 11}}
            }
 
@@ -423,6 +431,14 @@ defmodule SymphonyElixir.ExtensionsTest do
              },
              "retry" => nil,
              "blocked" => nil,
+             "work_efficiency" => %{
+               "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+               "completed_diff_lines" => 6,
+               "productive_turns" => 2,
+               "unproductive_turns" => 1,
+               "total_tokens" => 12,
+               "diff_lines_per_1k_tokens" => 500.0
+             },
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
              "last_error" => nil,
@@ -432,7 +448,16 @@ defmodule SymphonyElixir.ExtensionsTest do
     conn = get(build_conn(), "/api/v1/MT-RETRY")
 
     assert %{"status" => "retrying", "retry" => %{"attempt" => 2, "error" => "boom"}} =
-             json_response(conn, 200)
+             retry_payload = json_response(conn, 200)
+
+    assert retry_payload["work_efficiency"] == %{
+             "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+             "completed_diff_lines" => 4,
+             "productive_turns" => 1,
+             "unproductive_turns" => 1,
+             "total_tokens" => 16,
+             "diff_lines_per_1k_tokens" => 250.0
+           }
 
     conn = get(build_conn(), "/api/v1/MT-BLOCKED")
 
@@ -506,6 +531,125 @@ defmodule SymphonyElixir.ExtensionsTest do
                "generated_at" => timeout_payload["generated_at"],
                "error" => %{"code" => "snapshot_timeout", "message" => "Snapshot timed out"}
              }
+  end
+
+  test "phoenix observability api projects raw blocked entries without crashing and preserves work metrics" do
+    orchestrator_name = Module.concat(__MODULE__, :RawBlockedObservabilityApiOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: %{
+          running: [],
+          retrying: [],
+          blocked: [
+            %{
+              issue_id: "issue-blocked-raw",
+              identifier: "MT-BLOCKED-RAW",
+              issue: %Issue{
+                id: "issue-blocked-raw",
+                identifier: "MT-BLOCKED-RAW",
+                state: "Blocked",
+                url: "https://example.org/issues/MT-BLOCKED-RAW"
+              },
+              error: "codex turn requires operator input",
+              worker_host: "dm-dev2",
+              workspace_path: "/workspaces/MT-BLOCKED-RAW",
+              session_id: "thread-blocked-raw",
+              blocked_at: DateTime.utc_now(),
+              completed_diff_lines: 4,
+              current_turn_diff_lines: 0,
+              productive_turns: 1,
+              unproductive_turns: 0,
+              codex_input_tokens: 8,
+              codex_output_tokens: 4,
+              codex_total_tokens: 12,
+              last_codex_event: :turn_input_required,
+              last_codex_message: %{
+                event: :turn_input_required,
+                message: %{"method" => "turn/input_required"},
+                timestamp: DateTime.utc_now()
+              },
+              last_codex_timestamp: DateTime.utc_now()
+            }
+          ],
+          codex_totals: %{input_tokens: 8, output_tokens: 4, total_tokens: 12, seconds_running: 5.0},
+          work_efficiency: %{
+            heuristic: "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+            completed_diff_lines: 4,
+            productive_turns: 1,
+            unproductive_turns: 0,
+            total_tokens: 12,
+            diff_lines_per_1k_tokens: 333.3333333333333
+          },
+          rate_limits: nil
+        }
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    state_payload = json_response(get(build_conn(), "/api/v1/state"), 200)
+
+    assert state_payload["blocked"] == [
+             %{
+               "issue_id" => "issue-blocked-raw",
+               "issue_identifier" => "MT-BLOCKED-RAW",
+               "issue_url" => "https://example.org/issues/MT-BLOCKED-RAW",
+               "state" => "Blocked",
+               "error" => "codex turn requires operator input",
+               "worker_host" => "dm-dev2",
+               "workspace_path" => "/workspaces/MT-BLOCKED-RAW",
+               "session_id" => "thread-blocked-raw",
+               "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
+               "last_event" => "turn_input_required",
+               "last_message" => "turn blocked: waiting for user input",
+               "last_event_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("last_event_at")
+             }
+           ]
+
+    issue_payload = json_response(get(build_conn(), "/api/v1/MT-BLOCKED-RAW"), 200)
+
+    assert issue_payload == %{
+             "issue_identifier" => "MT-BLOCKED-RAW",
+             "issue_id" => "issue-blocked-raw",
+             "status" => "blocked",
+             "workspace" => %{
+               "path" => "/workspaces/MT-BLOCKED-RAW",
+               "host" => "dm-dev2"
+             },
+             "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
+             "running" => nil,
+             "retry" => nil,
+             "blocked" => %{
+               "worker_host" => "dm-dev2",
+               "workspace_path" => "/workspaces/MT-BLOCKED-RAW",
+               "session_id" => "thread-blocked-raw",
+               "state" => "Blocked",
+               "error" => "codex turn requires operator input",
+               "blocked_at" => issue_payload["blocked"]["blocked_at"],
+               "last_event" => "turn_input_required",
+               "last_message" => "turn blocked: waiting for user input",
+               "last_event_at" => issue_payload["blocked"]["last_event_at"]
+             },
+             "work_efficiency" => %{
+               "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+               "completed_diff_lines" => 4,
+               "productive_turns" => 1,
+               "unproductive_turns" => 0,
+               "total_tokens" => 12,
+               "diff_lines_per_1k_tokens" => 333.3333333333333
+             },
+             "logs" => %{"codex_session_logs" => []},
+             "recent_events" => [
+               %{
+                 "at" => issue_payload["recent_events"] |> List.first() |> Map.fetch!("at"),
+                 "event" => "turn_input_required",
+                 "message" => "turn blocked: waiting for user input"
+               }
+             ],
+             "last_error" => "codex turn requires operator input",
+             "tracked" => %{}
+           }
   end
 
   test "dashboard bootstraps liveview from embedded static assets" do
@@ -582,6 +726,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "rendered"
     assert html =~ "turn blocked: waiting for user input"
     assert html =~ "Runtime"
+    assert html =~ "Work / 1k tokens"
+    assert html =~ "Efficiency heuristic only"
+    assert html =~ "6 diff lines / 12 tokens"
     assert html =~ "Live"
     assert html =~ "Offline"
     assert html =~ "Copy ID"
@@ -620,9 +767,23 @@ defmodule SymphonyElixir.ExtensionsTest do
           codex_input_tokens: 10,
           codex_output_tokens: 12,
           codex_total_tokens: 22,
+          completed_diff_lines: 8,
+          current_turn_diff_lines: 0,
+          productive_turns: 3,
+          unproductive_turns: 1,
           started_at: DateTime.utc_now()
         }
       ])
+
+    updated_snapshot =
+      put_in(updated_snapshot.work_efficiency, %{
+        heuristic: "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+        completed_diff_lines: 8,
+        productive_turns: 3,
+        unproductive_turns: 1,
+        total_tokens: 22,
+        diff_lines_per_1k_tokens: 363.6363636363636
+      })
 
     :sys.replace_state(orchestrator_pid, fn state ->
       Keyword.put(state, :snapshot, updated_snapshot)
@@ -741,6 +902,10 @@ defmodule SymphonyElixir.ExtensionsTest do
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,
+          completed_diff_lines: 6,
+          current_turn_diff_lines: 0,
+          productive_turns: 2,
+          unproductive_turns: 1,
           started_at: DateTime.utc_now()
         }
       ],
@@ -751,7 +916,14 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_url: "https://example.org/issues/MT-RETRY",
           attempt: 2,
           due_in_ms: 2_000,
-          error: "boom"
+          error: "boom",
+          codex_input_tokens: 10,
+          codex_output_tokens: 6,
+          codex_total_tokens: 16,
+          completed_diff_lines: 4,
+          current_turn_diff_lines: 0,
+          productive_turns: 1,
+          unproductive_turns: 1
         }
       ],
       blocked: [
@@ -775,6 +947,14 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
+      work_efficiency: %{
+        heuristic: "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+        completed_diff_lines: 6,
+        productive_turns: 2,
+        unproductive_turns: 1,
+        total_tokens: 12,
+        diff_lines_per_1k_tokens: 500.0
+      },
       rate_limits: %{"primary" => %{"remaining" => 11}}
     }
   end

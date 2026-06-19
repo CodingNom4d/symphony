@@ -6,7 +6,7 @@ defmodule SymphonyElixir.StatusDashboard do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, HttpServer}
+  alias SymphonyElixir.{Config, HttpServer, WorkEfficiency}
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixirWeb.ObservabilityPubSub
 
@@ -316,6 +316,7 @@ defmodule SymphonyElixir.StatusDashboard do
              running: running,
              retrying: retrying,
              codex_totals: codex_totals,
+             work_efficiency: Map.get(snapshot, :work_efficiency),
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
            }},
@@ -340,6 +341,7 @@ defmodule SymphonyElixir.StatusDashboard do
         codex_output_tokens = Map.get(codex_totals, :output_tokens, 0)
         codex_total_tokens = Map.get(codex_totals, :total_tokens, 0)
         codex_seconds_running = Map.get(codex_totals, :seconds_running, 0)
+        work_efficiency = Map.get(snapshot, :work_efficiency) || WorkEfficiency.aggregate(%{}, codex_total_tokens)
         agent_count = length(running)
         max_agents = Config.settings!().agent.max_concurrent_agents
         running_event_width = running_event_width(terminal_columns_override)
@@ -362,6 +364,7 @@ defmodule SymphonyElixir.StatusDashboard do
              colorize("out #{format_count(codex_output_tokens)}", @ansi_yellow) <>
              colorize(" | ", @ansi_gray) <>
              colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
+           colorize("│ Work/1k: ", @ansi_bold) <> format_work_efficiency(work_efficiency),
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            project_link_lines,
            project_refresh_line,
@@ -426,6 +429,24 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_project_refresh_line(_) do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
+
+  defp format_work_efficiency(work_efficiency) when is_map(work_efficiency) do
+    normalized = Map.get(work_efficiency, :diff_lines_per_1k_tokens, 0.0)
+    completed_diff_lines = Map.get(work_efficiency, :completed_diff_lines, 0)
+    total_tokens = Map.get(work_efficiency, :total_tokens, 0)
+    productive_turns = Map.get(work_efficiency, :productive_turns, 0)
+    unproductive_turns = Map.get(work_efficiency, :unproductive_turns, 0)
+
+    colorize("#{Float.round(normalized, 1)} lines", @ansi_cyan) <>
+      colorize(" | ", @ansi_gray) <>
+      colorize("#{format_count(completed_diff_lines)} diff lines / #{format_count(total_tokens)} tokens", @ansi_yellow) <>
+      colorize(" | ", @ansi_gray) <>
+      colorize("productive #{format_count(productive_turns)}", @ansi_green) <>
+      colorize(" | ", @ansi_gray) <>
+      colorize("unproductive #{format_count(unproductive_turns)}", @ansi_orange)
+  end
+
+  defp format_work_efficiency(_work_efficiency), do: colorize("0.0 lines", @ansi_cyan)
 
   defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
 
@@ -561,6 +582,7 @@ defmodule SymphonyElixir.StatusDashboard do
              running: running,
              retrying: retrying,
              codex_totals: codex_totals,
+             work_efficiency: Map.get(snapshot, :work_efficiency),
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
            }}

@@ -110,6 +110,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
           </article>
+
+          <article class="metric-card">
+            <p class="metric-label">Work / 1k tokens</p>
+            <p class="metric-value numeric"><%= format_float(work_efficiency(@payload).diff_lines_per_1k_tokens) %></p>
+            <p class="metric-detail numeric">
+              <%= format_int(work_efficiency(@payload).completed_diff_lines) %> diff lines / <%= format_int(work_efficiency(@payload).total_tokens) %> tokens
+            </p>
+            <p class="metric-detail">Efficiency heuristic only, not a quality score.</p>
+          </article>
         </section>
 
         <section class="section-card">
@@ -381,6 +390,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
     payload.codex_totals.seconds_running || 0
   end
 
+  defp work_efficiency(payload) do
+    Map.get(payload, :work_efficiency) ||
+      %{
+        diff_lines_per_1k_tokens: 0.0,
+        completed_diff_lines: 0,
+        total_tokens: 0
+      }
+  end
+
   defp total_runtime_seconds(payload, now) do
     completed_runtime_seconds(payload) +
       Enum.reduce(payload.running, 0, fn entry, total ->
@@ -424,6 +442,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp format_int(_value), do: "n/a"
+
+  defp format_float(value) when is_number(value) do
+    (value * 1.0)
+    |> Float.round(1)
+    |> :erlang.float_to_binary(decimals: 1)
+  end
+
+  defp format_float(_value), do: "n/a"
 
   defp state_badge_class(state) do
     base = "state-badge"

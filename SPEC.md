@@ -241,6 +241,14 @@ Fields:
 - `last_reported_input_tokens` (integer)
 - `last_reported_output_tokens` (integer)
 - `last_reported_total_tokens` (integer)
+- `completed_diff_lines` (integer)
+  - Count of non-empty diff lines observed for turns that reached completion.
+- `current_turn_diff_lines` (integer)
+  - Latest non-empty diff line count observed for the currently active turn.
+- `productive_turns` (integer)
+  - Turns completed with a non-zero diff signal.
+- `unproductive_turns` (integer)
+  - Turns completed without a diff signal.
 - `turn_count` (integer)
   - Number of coding-agent turns started within the current worker lifetime.
 
@@ -270,6 +278,7 @@ Fields:
 - `retry_attempts` (map `issue_id -> RetryEntry`)
 - `completed` (set of issue IDs; bookkeeping only, not dispatch gating)
 - `codex_totals` (aggregate tokens + runtime seconds)
+- `work_totals` (aggregate completed diff lines and productive/unproductive turn counts)
 - `codex_rate_limits` (latest rate-limit snapshot from agent events)
 
 ### 4.2 Stable Identifiers and Normalization Rules
@@ -1300,6 +1309,13 @@ SHOULD return:
   - `output_tokens`
   - `total_tokens`
   - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
+- `work_efficiency`
+  - `heuristic` (string label explaining the metric is an efficiency heuristic, not a quality score)
+  - `completed_diff_lines`
+  - `productive_turns`
+  - `unproductive_turns`
+  - `total_tokens`
+  - `diff_lines_per_1k_tokens`
 - `rate_limits` (latest coding-agent rate limit payload, if available)
 
 RECOMMENDED snapshot error modes:
@@ -1340,6 +1356,19 @@ Runtime accounting:
 - Add run duration seconds to the cumulative ended-session runtime when a session ends (normal exit
   or cancellation/termination).
 - Continuous background ticking of runtime totals is not REQUIRED.
+
+Work-efficiency heuristic:
+
+- Implementations MAY expose a conservative work-per-token heuristic for observability.
+- A conforming heuristic SHOULD rely on durable progress signals already observed by the orchestrator
+  rather than subscription or billing windows.
+- One acceptable first version is:
+  - track the latest non-empty line count from `turn/diff/updated`
+  - only add those diff lines to aggregate work totals when the turn reaches a completed state
+  - count completed turns with zero diff lines as unproductive
+  - exclude retry/backoff-only turns from productive totals
+- Any human-readable label or API field for this metric SHOULD clearly describe it as an efficiency
+  heuristic and not a quality score.
 
 Rate-limit tracking:
 
@@ -1445,6 +1474,14 @@ Minimum endpoints:
         "total_tokens": 7400,
         "seconds_running": 1834.2
       },
+      "work_efficiency": {
+        "heuristic": "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+        "completed_diff_lines": 185,
+        "productive_turns": 12,
+        "unproductive_turns": 4,
+        "total_tokens": 7400,
+        "diff_lines_per_1k_tokens": 25.0
+      },
       "rate_limits": null
     }
     ```
@@ -1479,6 +1516,14 @@ Minimum endpoints:
           "output_tokens": 800,
           "total_tokens": 2000
         }
+      },
+      "work_efficiency": {
+        "heuristic": "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+        "completed_diff_lines": 42,
+        "productive_turns": 3,
+        "unproductive_turns": 1,
+        "total_tokens": 2000,
+        "diff_lines_per_1k_tokens": 21.0
       },
       "retry": null,
       "logs": {
@@ -1707,6 +1752,7 @@ function start_service():
     retry_attempts: {},
     completed: set(),
     codex_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+    work_totals: {completed_diff_lines: 0, productive_turns: 0, unproductive_turns: 0},
     codex_rate_limits: null
   }
 
@@ -1809,6 +1855,10 @@ function dispatch_issue(issue, state, attempt):
     last_reported_input_tokens: 0,
     last_reported_output_tokens: 0,
     last_reported_total_tokens: 0,
+    completed_diff_lines: 0,
+    current_turn_diff_lines: 0,
+    productive_turns: 0,
+    unproductive_turns: 0,
     retry_attempt: normalize_attempt(attempt),
     started_at: now_utc()
   }

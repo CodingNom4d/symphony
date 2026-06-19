@@ -4,6 +4,7 @@
 │ Throughput: 42 tps
 │ Runtime: 1m 15s
 │ Tokens: in 90 | out 12 | total 102
+│ Work/1k: 0.0 lines | 0 diff lines / 102 tokens | productive 0 | unproductive 0
 │ Rate Limits: priority-tier | primary 100/100 reset 1s | secondary 500/500 reset 1s | credits unlimited
 │ Project: https://linear.app/project/project/issues
 │ Next refresh: n/a

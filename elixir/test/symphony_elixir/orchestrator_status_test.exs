@@ -275,6 +275,586 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.total_tokens == 16
   end
 
+  test "orchestrator snapshot aggregates completed diff-line work efficiency" do
+    issue_id = "issue-work-efficiency"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-221",
+      title: "Work efficiency test",
+      description: "Track productive versus unproductive turns",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-221"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :WorkEfficiencyOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-work-turn-1",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "turn/diff/updated",
+           "params" => %{"diff" => "+line 1\n-line 2\n\n context\n"}
+         },
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "thread/tokenUsage/updated",
+           "params" => %{
+             "tokenUsage" => %{
+               "total" => %{"inputTokens" => 12, "outputTokens" => 8, "totalTokens" => 20}
+             }
+           }
+         },
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_completed,
+         payload: %{
+           "method" => "turn/completed",
+           "params" => %{"turn" => %{"status" => "completed"}}
+         },
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-work-turn-2",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_completed,
+         payload: %{
+           "method" => "turn/completed",
+           "params" => %{"turn" => %{"status" => "completed"}}
+         },
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.turn_count == 2
+    assert snapshot_entry.completed_diff_lines == 3
+    assert snapshot_entry.current_turn_diff_lines == 0
+    assert snapshot_entry.productive_turns == 1
+    assert snapshot_entry.unproductive_turns == 1
+    assert work_efficiency.completed_diff_lines == 3
+    assert work_efficiency.productive_turns == 1
+    assert work_efficiency.unproductive_turns == 1
+    assert work_efficiency.total_tokens == 20
+    assert_in_delta work_efficiency.diff_lines_per_1k_tokens, 150.0, 0.0001
+  end
+
+  test "orchestrator snapshot ignores duplicate turn_completed updates for the same turn" do
+    issue_id = "issue-work-efficiency-duplicate-completion"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-221-DUPE",
+      title: "Work efficiency duplicate completion test",
+      description: "Ignore duplicate turn completion events",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-221-DUPE"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :DuplicateTurnCompletedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-work-turn-duplicate",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "turn/diff/updated",
+           "params" => %{"diff" => "+line 1\n-line 2\n\n context\n"}
+         },
+         timestamp: now
+       }}
+    )
+
+    completion_update = %{
+      event: :turn_completed,
+      payload: %{
+        "method" => "turn/completed",
+        "params" => %{"turn" => %{"status" => "completed"}}
+      },
+      timestamp: now
+    }
+
+    send(pid, {:codex_worker_update, issue_id, completion_update})
+    send(pid, {:codex_worker_update, issue_id, completion_update})
+
+    snapshot = GenServer.call(pid, :snapshot)
+
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.turn_count == 1
+    assert snapshot_entry.completed_diff_lines == 3
+    assert snapshot_entry.current_turn_diff_lines == 0
+    assert snapshot_entry.productive_turns == 1
+    assert snapshot_entry.unproductive_turns == 0
+    assert work_efficiency.completed_diff_lines == 3
+    assert work_efficiency.productive_turns == 1
+    assert work_efficiency.unproductive_turns == 0
+  end
+
+  test "orchestrator snapshot ignores replayed previous-turn completion after the next turn starts" do
+    issue_id = "issue-work-efficiency-cross-turn-replay"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-221-REPLAY",
+      title: "Work efficiency cross-turn replay test",
+      description: "Ignore replayed turn completion events from the previous turn",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-221-REPLAY"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :CrossTurnReplayOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    turn_one_started_at = DateTime.utc_now()
+    turn_one_completed_at = DateTime.add(turn_one_started_at, 1, :second)
+    turn_two_started_at = DateTime.add(turn_one_started_at, 2, :second)
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-work-turn-replay-1",
+         timestamp: turn_one_started_at
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "turn/diff/updated",
+           "params" => %{"diff" => "+line 1\n-line 2\n\n context\n"}
+         },
+         timestamp: turn_one_started_at
+       }}
+    )
+
+    completion_update = %{
+      event: :turn_completed,
+      payload: %{
+        "method" => "turn/completed",
+        "params" => %{"turn" => %{"status" => "completed"}}
+      },
+      timestamp: turn_one_completed_at
+    }
+
+    send(pid, {:codex_worker_update, issue_id, completion_update})
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-work-turn-replay-2",
+         timestamp: turn_two_started_at
+       }}
+    )
+
+    send(pid, {:codex_worker_update, issue_id, completion_update})
+
+    snapshot = GenServer.call(pid, :snapshot)
+
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.turn_count == 2
+    assert snapshot_entry.completed_diff_lines == 3
+    assert snapshot_entry.current_turn_diff_lines == 0
+    assert snapshot_entry.productive_turns == 1
+    assert snapshot_entry.unproductive_turns == 0
+    assert work_efficiency.completed_diff_lines == 3
+    assert work_efficiency.productive_turns == 1
+    assert work_efficiency.unproductive_turns == 0
+  end
+
+  test "orchestrator snapshot ignores replayed previous-turn diff after the next turn starts" do
+    issue_id = "issue-work-efficiency-replayed-diff"
+    issue = %Issue{id: issue_id, identifier: "MT-221-DIFF", state: "In Progress"}
+    orchestrator_name = Module.concat(__MODULE__, :ReplayedDiffOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(pid, {:codex_worker_update, issue_id, %{event: :session_started, session_id: "thread-turn-1", turn_id: "turn-1", timestamp: now}})
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         turn_id: "turn-1",
+         payload: %{"method" => "turn/diff/updated", "params" => %{"diff" => "+line 1\n+line 2\n"}},
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id, %{event: :turn_completed, turn_id: "turn-1", payload: %{"method" => "turn/completed"}, timestamp: now}}
+    )
+
+    send(pid, {:codex_worker_update, issue_id, %{event: :session_started, session_id: "thread-turn-2", turn_id: "turn-2", timestamp: now}})
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         turn_id: "turn-1",
+         payload: %{"method" => "turn/diff/updated", "params" => %{"diff" => "+stale\n+diff\n+replay\n"}},
+         timestamp: DateTime.add(now, 1, :second)
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.completed_diff_lines == 2
+    assert snapshot_entry.current_turn_diff_lines == 0
+    assert work_efficiency.completed_diff_lines == 2
+  end
+
+  test "orchestrator snapshot preserves non-zero diff when a blank diff update follows" do
+    issue_id = "issue-work-efficiency-blank-diff"
+    issue = %Issue{id: issue_id, identifier: "MT-221-BLANK", state: "In Progress"}
+    orchestrator_name = Module.concat(__MODULE__, :BlankDiffOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(pid, {:codex_worker_update, issue_id, %{event: :session_started, session_id: "thread-blank", turn_id: "turn-blank", timestamp: now}})
+
+    for diff <- ["+line 1\n-line 2\n", "\n\n"] do
+      send(
+        pid,
+        {:codex_worker_update, issue_id,
+         %{
+           event: :notification,
+           turn_id: "turn-blank",
+           payload: %{"method" => "turn/diff/updated", "params" => %{"diff" => diff}},
+           timestamp: now
+         }}
+      )
+    end
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id, %{event: :turn_completed, turn_id: "turn-blank", payload: %{"method" => "turn/completed"}, timestamp: now}}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.completed_diff_lines == 2
+    assert snapshot_entry.productive_turns == 1
+    assert snapshot_entry.unproductive_turns == 0
+    assert work_efficiency.completed_diff_lines == 2
+  end
+
+  test "orchestrator snapshot ignores fresh-timestamp completion replay with a previous turn marker" do
+    issue_id = "issue-work-efficiency-fresh-replay"
+    issue = %Issue{id: issue_id, identifier: "MT-221-FRESH", state: "In Progress"}
+    orchestrator_name = Module.concat(__MODULE__, :FreshReplayOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id, %{event: :session_started, session_id: "thread-fresh-1", turn_id: "turn-fresh-1", timestamp: now}}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id, %{event: :turn_completed, turn_id: "turn-fresh-1", payload: %{"method" => "turn/completed"}, timestamp: now}}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id, %{event: :session_started, session_id: "thread-fresh-2", turn_id: "turn-fresh-2", timestamp: now}}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_completed,
+         turn_id: "turn-fresh-1",
+         payload: %{"method" => "turn/completed"},
+         timestamp: DateTime.add(now, 2, :second)
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.unproductive_turns == 1
+    assert work_efficiency.unproductive_turns == 1
+  end
+
   test "orchestrator snapshot tracks codex token-count cumulative usage payloads" do
     issue_id = "issue-token-count-snapshot"
 
@@ -386,6 +966,118 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.input_tokens == 10
     assert completed_state.codex_totals.output_tokens == 5
     assert completed_state.codex_totals.total_tokens == 15
+  end
+
+  test "orchestrator snapshot excludes retrying turns from productive work efficiency" do
+    issue_id = "issue-unproductive-retry"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-222",
+      title: "Retry work efficiency test",
+      description: "Do not count failed retries as productive work",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-222"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :RetryWorkEfficiencyOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-retry-turn-1",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "turn/diff/updated",
+           "params" => %{"diff" => "+line 1\n+line 2\n"}
+         },
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "thread/tokenUsage/updated",
+           "params" => %{
+             "tokenUsage" => %{
+               "total" => %{"inputTokens" => 5, "outputTokens" => 5, "totalTokens" => 10}
+             }
+           }
+         },
+         timestamp: now
+       }}
+    )
+
+    send(pid, {:DOWN, process_ref, :process, self(), {:shutdown, :retry_later}})
+
+    snapshot =
+      wait_for_snapshot(pid, fn
+        %{retrying: [_retry_entry], work_efficiency: work_efficiency} ->
+          work_efficiency.total_tokens == 10
+
+        _ ->
+          false
+      end)
+
+    assert snapshot.running == []
+    assert [%{attempt: 1}] = snapshot.retrying
+    assert snapshot.work_efficiency.completed_diff_lines == 0
+    assert snapshot.work_efficiency.productive_turns == 0
+    assert snapshot.work_efficiency.unproductive_turns == 0
+    assert snapshot.work_efficiency.total_tokens == 10
+    assert snapshot.work_efficiency.diff_lines_per_1k_tokens == 0.0
   end
 
   test "orchestrator snapshot tracks codex rate-limit payloads" do
@@ -1247,6 +1939,34 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     checking_rendered = StatusDashboard.format_snapshot_content_for_test(checking_snapshot, 0.0)
     assert checking_rendered =~ "checking now…"
+  end
+
+  test "status dashboard renders work efficiency heuristic and raw counts" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 12, output_tokens: 8, total_tokens: 20, seconds_running: 45},
+         work_efficiency: %{
+           heuristic: "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
+           completed_diff_lines: 3,
+           productive_turns: 1,
+           unproductive_turns: 1,
+           total_tokens: 20,
+           diff_lines_per_1k_tokens: 150.0
+         },
+         rate_limits: nil
+       }}
+
+    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
+    plain = Regex.replace(~r/\e\[[0-9;]*m/, rendered, "")
+
+    assert plain =~ "Work/1k:"
+    assert plain =~ "150.0 lines"
+    assert plain =~ "3 diff lines / 20 tokens"
+    assert plain =~ "productive 1"
+    assert plain =~ "unproductive 1"
   end
 
   test "status dashboard adds a spacer line before backoff queue when no agents are active" do
