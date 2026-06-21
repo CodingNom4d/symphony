@@ -1,0 +1,6 @@
+{
+  "result": false,
+  "errorcode": 100,
+  "errormsg": "Unsupported Ticker Interval. Supported intervals are [60,300,900,1800,3600,7200,14400,21600,43200,86400,604800,2419200,9676800,31449600]",
+  "detail": null
+}

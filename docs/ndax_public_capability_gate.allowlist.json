@@ -1,0 +1,237 @@
+{
+  "exchange": "ndax",
+  "captured_on": "2026-06-21",
+  "default_policy": "deny",
+  "transport_allowlist": [
+    {
+      "scheme": "wss",
+      "host": "api.ndax.io",
+      "path": "/WSGateway/",
+      "purpose": "public NDAX market-data websocket gateway",
+      "evidence": "live public probes on 2026-06-21"
+    }
+  ],
+  "method_allowlist": [
+    {
+      "name": "GetInstruments",
+      "required_request": {
+        "OMSId": 1
+      },
+      "constraints": [],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_instruments.sample.json",
+      "required_fields": [
+        "OMSId",
+        "InstrumentId",
+        "Symbol",
+        "Product1Symbol",
+        "Product2Symbol",
+        "SessionStatus",
+        "QuantityIncrement",
+        "PriceIncrement",
+        "MinimumQuantity",
+        "MinimumPrice",
+        "IsDisable"
+      ]
+    },
+    {
+      "name": "GetInstrument",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1
+      },
+      "constraints": [],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_instrument.sample.json",
+      "required_fields": [
+        "OMSId",
+        "InstrumentId",
+        "Symbol",
+        "Product1Symbol",
+        "Product2Symbol",
+        "SessionStatus",
+        "QuantityIncrement",
+        "PriceIncrement",
+        "MinimumQuantity",
+        "MinimumPrice",
+        "IsDisable"
+      ]
+    },
+    {
+      "name": "GetLevel1",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1
+      },
+      "constraints": [],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_level1.sample.json",
+      "required_fields": [
+        "OMSId",
+        "InstrumentId",
+        "BestBid",
+        "BestOffer",
+        "LastTradedPx",
+        "LastTradedQty",
+        "LastTradeTime",
+        "TimeStamp",
+        "BidQty",
+        "AskQty",
+        "Rolling24HrPxChangePercent"
+      ]
+    },
+    {
+      "name": "GetL2Snapshot",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1,
+        "Depth": 20
+      },
+      "constraints": [
+        "Depth must remain 20"
+      ],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_l2_snapshot_depth20.sample.json",
+      "row_fields": [
+        "MDUpdateId",
+        "AccountId",
+        "ActionDateTime",
+        "ActionType",
+        "LastTradePrice",
+        "OrderId",
+        "Price",
+        "ProductPairCode",
+        "Quantity",
+        "Side"
+      ]
+    },
+    {
+      "name": "SubscribeLevel1",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1
+      },
+      "constraints": [],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/subscribe_level1_update_event.sample.json",
+      "required_fields": [
+        "OMSId",
+        "InstrumentId",
+        "BestBid",
+        "BestOffer",
+        "LastTradedPx",
+        "LastTradeTime",
+        "TimeStamp",
+        "BidQty",
+        "AskQty"
+      ]
+    },
+    {
+      "name": "SubscribeLevel2",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1,
+        "Depth": 20
+      },
+      "constraints": [
+        "Depth must remain 20"
+      ],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/subscribe_level2_update_event.sample.json",
+      "row_fields": [
+        "MDUpdateId",
+        "AccountId",
+        "ActionDateTime",
+        "ActionType",
+        "LastTradePrice",
+        "OrderId",
+        "Price",
+        "ProductPairCode",
+        "Quantity",
+        "Side"
+      ]
+    },
+    {
+      "name": "SubscribeTicker",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1,
+        "Interval": 60,
+        "IncludeLastCount": 5
+      },
+      "constraints": [
+        "Only Interval 60 is proven",
+        "Only IncludeLastCount 5 is proven for this gate"
+      ],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/subscribe_ticker_interval60.sample.json",
+      "row_fields": [
+        "CloseTimeMs",
+        "High",
+        "Low",
+        "Open",
+        "Close",
+        "Volume",
+        "InsideBidPrice",
+        "InsideAskPrice",
+        "InstrumentId",
+        "WindowStartMs"
+      ]
+    },
+    {
+      "name": "SubscribeTrades",
+      "required_request": {
+        "OMSId": 1,
+        "InstrumentId": 1,
+        "IncludeLastCount": 5
+      },
+      "constraints": [
+        "Only IncludeLastCount 5 is proven for this gate"
+      ],
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/subscribe_trades.sample.json",
+      "row_fields": [
+        "TradeId",
+        "ProductPairCode",
+        "Quantity",
+        "Price",
+        "Order1",
+        "Order2",
+        "TradeTimeMs",
+        "Direction",
+        "TakerSide",
+        "BlockTrade",
+        "ClientOrderId"
+      ]
+    }
+  ],
+  "excluded_evidence": [
+    {
+      "name": "GetTickerHistory",
+      "status": "unresolved",
+      "reason": "documented method returned an empty payload in live unauthenticated probes",
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_ticker_history.empty_payload.sample.json"
+    },
+    {
+      "name": "GetTradesHistory",
+      "status": "forbidden",
+      "reason": "live unauthenticated probe returned endpoint-not-found",
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/get_trades_history.endpoint_not_found.sample.json"
+    },
+    {
+      "name": "SubscribeTicker",
+      "status": "forbidden",
+      "reason": "Interval 1 is explicitly unsupported by the gateway",
+      "fixture": "elixir/test/fixtures/ndax_public_capability_gate/subscribe_ticker_interval1_error.sample.json"
+    }
+  ],
+  "forbidden_policy": [
+    "All NDAX transports other than wss://api.ndax.io/WSGateway/ are forbidden for this project gate.",
+    "All NDAX REST paths are forbidden until a later human-approved issue proves exact public paths and fields.",
+    "All private, authenticated, account, trading, funding, ticket, treasury, and report methods are forbidden.",
+    "All methods not named in method_allowlist are forbidden.",
+    "Unknown or newly discovered NDAX methods fail closed until a human-approved issue adds them."
+  ],
+  "capture_decision": {
+    "status": "feasible",
+    "decision": "1-second capture is feasible through public websocket event feeds and infeasible through REST polling.",
+    "reason": [
+      "NDAX's public support article states REST is limited to 50 requests per minute, which is below the 60 requests per minute required for 1-second polling.",
+      "A live public SubscribeLevel2 probe produced many Level2UpdateEvent frames within a 5-second window.",
+      "A live public manual SubscribeTrades probe produced a TradeDataUpdateEvent in roughly 403 ms.",
+      "SubscribeTicker does not support Interval 1, so 1-second capture cannot rely on ticker bars."
+    ]
+  }
+}

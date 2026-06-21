@@ -1,0 +1,28 @@
+[
+  {
+    "OMSId": 1,
+    "InstrumentId": 1,
+    "Symbol": "BTCCAD",
+    "Product1Symbol": "BTC",
+    "Product2Symbol": "CAD",
+    "SessionStatus": "Running",
+    "QuantityIncrement": 0.00000001,
+    "PriceIncrement": 0.01,
+    "MinimumQuantity": 0.00001,
+    "MinimumPrice": 25000,
+    "IsDisable": false
+  },
+  {
+    "OMSId": 1,
+    "InstrumentId": 2,
+    "Symbol": "BCHCAD",
+    "Product1Symbol": "BCH",
+    "Product2Symbol": "CAD",
+    "SessionStatus": "Running",
+    "QuantityIncrement": 0.00000001,
+    "PriceIncrement": 0.00000001,
+    "MinimumQuantity": 0.00000001,
+    "MinimumPrice": 0.00000001,
+    "IsDisable": false
+  }
+]
