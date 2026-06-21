@@ -24,7 +24,9 @@ defmodule SymphonyElixir.WorkflowContractTest do
     {:app_runtime_substitute, "App runtime validation (required)", "documented manual runtime check"},
     {:app_runtime_substitute_evidence, "App runtime validation (required)", "record that substitute evidence in the workpad"},
     {:app_runtime_no_overclaim, "App runtime validation (required)", "Do not search indefinitely or claim app validation without evidence"},
-    {:app_runtime_blocked_access, "App runtime validation (required)", "If no runtime substitute exists and app-touching validation is required"}
+    {:app_runtime_blocked_access, "App runtime validation (required)", "If no runtime substitute exists and app-touching validation is required"},
+    {:dry_run_guardrails_checklist, "Step 1: Start/continue execution (Todo or In Progress)", "If the issue touches data capture, signal replay, or backtesting"},
+    {:dry_run_guardrails_validation, "Step 2: Execution phase (Todo -> In Progress -> Human Review)", "re-run `mix guardrails.check` before every handoff"}
   ]
 
   test "current workflow prompt satisfies unattended agent contracts" do

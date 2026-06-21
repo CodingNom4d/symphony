@@ -24,6 +24,8 @@ defmodule SymphonyElixir.WorkflowContract do
           | :app_runtime_substitute_evidence
           | :app_runtime_no_overclaim
           | :app_runtime_blocked_access
+          | :dry_run_guardrails_checklist
+          | :dry_run_guardrails_validation
 
   @type error :: %{
           id: error_id(),
@@ -168,6 +170,24 @@ defmodule SymphonyElixir.WorkflowContract do
       snippets: [
         "If no runtime substitute exists and app-touching validation is required",
         "blocked-access escape hatch"
+      ]
+    },
+    %{
+      id: :dry_run_guardrails_checklist,
+      section: "Step 1: Start/continue execution (Todo or In Progress)",
+      snippets: [
+        "If the issue touches data capture, signal replay, or backtesting",
+        "`mix guardrails.check`",
+        "`SymphonyElixir.BoundaryGuardrails.policy/0`"
+      ]
+    },
+    %{
+      id: :dry_run_guardrails_validation,
+      section: "Step 2: Execution phase (Todo -> In Progress -> Human Review)",
+      snippets: [
+        "If the scope touches data capture, signal replay, or backtesting",
+        "re-run `mix guardrails.check` before every handoff",
+        "raw bodies, headers, query strings, cookies, auth material, and secret-like values"
       ]
     }
   ]

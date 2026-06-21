@@ -164,6 +164,7 @@ Symphony unattended override: if a related skill asks to wait for or ask a human
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
+    - If the issue touches data capture, signal replay, or backtesting, add required checklist items for `mix guardrails.check`, review of governed paths and exclusions from `SymphonyElixir.BoundaryGuardrails.policy/0`, and confirmation that no raw request storage or replay/backtest network-private-execution imports were introduced.
 7.  Run a principal-style self-review of the plan and refine it in the comment.
 8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
 9.  Run the `pull` skill to sync with latest `origin/main` before any code edits, then record the pull/sync result in the workpad `Notes`.
@@ -230,6 +231,7 @@ Use this section when changes touch app files or app behavior.
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
     - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff; follow `App runtime validation (required)` for fallback handling.
+    - If the scope touches data capture, signal replay, or backtesting, re-run `mix guardrails.check` before every handoff and treat any raw bodies, headers, query strings, cookies, auth material, and secret-like values or any replay/backtest/strategy import of network/private/execution code as a blocker unless a human-approved issue explicitly authorizes that surface.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).

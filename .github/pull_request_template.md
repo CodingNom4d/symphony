@@ -19,4 +19,5 @@
 #### Test Plan
 
 - [ ] `make -C elixir all`
+- [ ] If touching data capture, signal replay, or backtesting: `cd elixir && mix guardrails.check`
 - [ ] <!-- Additional targeted checks (list below) -->
