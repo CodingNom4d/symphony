@@ -335,6 +335,9 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       )
 
+    high_efficiency = aggregate(:high_efficiency)
+    low_efficiency = aggregate(:low_efficiency)
+
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     conn = get(build_conn(), "/api/v1/state")
@@ -395,12 +398,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "seconds_running" => 42.5
              },
              "work_efficiency" => %{
-               "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
-               "completed_diff_lines" => 6,
-               "productive_turns" => 2,
-               "unproductive_turns" => 1,
-               "total_tokens" => 12,
-               "diff_lines_per_1k_tokens" => 500.0
+               "heuristic" => high_efficiency.heuristic,
+               "completed_diff_lines" => high_efficiency.completed_diff_lines,
+               "productive_turns" => high_efficiency.productive_turns,
+               "unproductive_turns" => high_efficiency.unproductive_turns,
+               "total_tokens" => high_efficiency.total_tokens,
+               "diff_lines_per_1k_tokens" => high_efficiency.diff_lines_per_1k_tokens
              },
              "rate_limits" => %{"primary" => %{"remaining" => 11}}
            }
@@ -432,12 +435,12 @@ defmodule SymphonyElixir.ExtensionsTest do
              "retry" => nil,
              "blocked" => nil,
              "work_efficiency" => %{
-               "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
-               "completed_diff_lines" => 6,
-               "productive_turns" => 2,
-               "unproductive_turns" => 1,
-               "total_tokens" => 12,
-               "diff_lines_per_1k_tokens" => 500.0
+               "heuristic" => high_efficiency.heuristic,
+               "completed_diff_lines" => high_efficiency.completed_diff_lines,
+               "productive_turns" => high_efficiency.productive_turns,
+               "unproductive_turns" => high_efficiency.unproductive_turns,
+               "total_tokens" => high_efficiency.total_tokens,
+               "diff_lines_per_1k_tokens" => high_efficiency.diff_lines_per_1k_tokens
              },
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
@@ -451,12 +454,12 @@ defmodule SymphonyElixir.ExtensionsTest do
              retry_payload = json_response(conn, 200)
 
     assert retry_payload["work_efficiency"] == %{
-             "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
-             "completed_diff_lines" => 4,
-             "productive_turns" => 1,
-             "unproductive_turns" => 1,
-             "total_tokens" => 16,
-             "diff_lines_per_1k_tokens" => 250.0
+             "heuristic" => low_efficiency.heuristic,
+             "completed_diff_lines" => low_efficiency.completed_diff_lines,
+             "productive_turns" => low_efficiency.productive_turns,
+             "unproductive_turns" => low_efficiency.unproductive_turns,
+             "total_tokens" => low_efficiency.total_tokens,
+             "diff_lines_per_1k_tokens" => low_efficiency.diff_lines_per_1k_tokens
            }
 
     conn = get(build_conn(), "/api/v1/MT-BLOCKED")
@@ -699,6 +702,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   test "dashboard liveview renders and refreshes over pubsub" do
     orchestrator_name = Module.concat(__MODULE__, :DashboardOrchestrator)
     snapshot = static_snapshot()
+    high_efficiency = aggregate(:high_efficiency)
 
     {:ok, orchestrator_pid} =
       StaticOrchestrator.start_link(
@@ -727,8 +731,12 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "turn blocked: waiting for user input"
     assert html =~ "Runtime"
     assert html =~ "Work / 1k tokens"
+    assert html =~ "#{high_efficiency.diff_lines_per_1k_tokens}"
     assert html =~ "Efficiency heuristic only"
-    assert html =~ "6 diff lines / 12 tokens"
+
+    assert html =~
+             "#{high_efficiency.completed_diff_lines} diff lines / #{high_efficiency.total_tokens} tokens"
+
     assert html =~ "Live"
     assert html =~ "Offline"
     assert html =~ "Copy ID"
@@ -886,45 +894,45 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   defp static_snapshot do
+    high_efficiency = aggregate(:high_efficiency)
+
     %{
       running: [
-        %{
-          issue_id: "issue-http",
-          identifier: "MT-HTTP",
-          issue_url: "https://example.org/issues/MT-HTTP",
-          state: "In Progress",
-          session_id: "thread-http",
-          turn_count: 7,
-          codex_app_server_pid: nil,
-          last_codex_message: "rendered",
-          last_codex_timestamp: nil,
-          last_codex_event: :notification,
-          codex_input_tokens: 4,
-          codex_output_tokens: 8,
-          codex_total_tokens: 12,
-          completed_diff_lines: 6,
-          current_turn_diff_lines: 0,
-          productive_turns: 2,
-          unproductive_turns: 1,
-          started_at: DateTime.utc_now()
-        }
+        Map.merge(
+          entry(:high_efficiency),
+          %{
+            issue_id: "issue-http",
+            identifier: "MT-HTTP",
+            issue_url: "https://example.org/issues/MT-HTTP",
+            state: "In Progress",
+            session_id: "thread-http",
+            turn_count: 7,
+            codex_app_server_pid: nil,
+            last_codex_message: "rendered",
+            last_codex_timestamp: nil,
+            last_codex_event: :notification,
+            codex_input_tokens: 4,
+            codex_output_tokens: 8,
+            current_turn_diff_lines: 0,
+            started_at: DateTime.utc_now()
+          }
+        )
       ],
       retrying: [
-        %{
-          issue_id: "issue-retry",
-          identifier: "MT-RETRY",
-          issue_url: "https://example.org/issues/MT-RETRY",
-          attempt: 2,
-          due_in_ms: 2_000,
-          error: "boom",
-          codex_input_tokens: 10,
-          codex_output_tokens: 6,
-          codex_total_tokens: 16,
-          completed_diff_lines: 4,
-          current_turn_diff_lines: 0,
-          productive_turns: 1,
-          unproductive_turns: 1
-        }
+        Map.merge(
+          entry(:low_efficiency),
+          %{
+            issue_id: "issue-retry",
+            identifier: "MT-RETRY",
+            issue_url: "https://example.org/issues/MT-RETRY",
+            attempt: 2,
+            due_in_ms: 2_000,
+            error: "boom",
+            codex_input_tokens: 1_500,
+            codex_output_tokens: 500,
+            current_turn_diff_lines: 0
+          }
+        )
       ],
       blocked: [
         %{
@@ -947,14 +955,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
-      work_efficiency: %{
-        heuristic: "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
-        completed_diff_lines: 6,
-        productive_turns: 2,
-        unproductive_turns: 1,
-        total_tokens: 12,
-        diff_lines_per_1k_tokens: 500.0
-      },
+      work_efficiency: high_efficiency,
       rate_limits: %{"primary" => %{"remaining" => 11}}
     }
   end

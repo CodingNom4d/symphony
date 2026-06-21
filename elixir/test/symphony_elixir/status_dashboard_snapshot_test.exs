@@ -167,22 +167,31 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
   end
 
   test "snapshot fixture: unlimited credits variant" do
+    low_efficiency = aggregate(:low_efficiency)
+
     snapshot_data =
       {:ok,
        %{
          running: [
-           running_entry(%{
-             identifier: "MT-777",
-             state: "running",
-             codex_total_tokens: 3_200,
-             runtime_seconds: 75,
-             turn_count: 7,
-             last_codex_event: "codex/event/token_count",
-             last_codex_message: token_usage_message(90, 12, 102)
-           })
+           running_entry(
+             Map.merge(entry(:low_efficiency), %{
+               identifier: "MT-777",
+               state: "running",
+               runtime_seconds: 75,
+               turn_count: 7,
+               last_codex_event: "codex/event/token_count",
+               last_codex_message: token_usage_message(1_500, 500, low_efficiency.total_tokens)
+             })
+           )
          ],
          retrying: [],
-         codex_totals: %{input_tokens: 90, output_tokens: 12, total_tokens: 102, seconds_running: 75},
+         codex_totals: %{
+           input_tokens: 1_500,
+           output_tokens: 500,
+           total_tokens: low_efficiency.total_tokens,
+           seconds_running: 75
+         },
+         work_efficiency: low_efficiency,
          rate_limits: %{
            limit_id: "priority-tier",
            primary: %{remaining: 100, limit: 100, reset_in_seconds: 1},

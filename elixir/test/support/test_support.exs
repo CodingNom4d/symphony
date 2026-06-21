@@ -24,6 +24,10 @@ defmodule SymphonyElixir.TestSupport do
       import SymphonyElixir.TestSupport,
         only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
 
+      alias SymphonyElixir.TestSupport.WorkEfficiencyFixtures
+
+      import SymphonyElixir.TestSupport.WorkEfficiencyFixtures, only: [aggregate: 1, entry: 1]
+
       setup do
         workflow_root =
           Path.join(
@@ -68,6 +72,41 @@ defmodule SymphonyElixir.TestSupport do
 
   def restore_env(key, nil), do: System.delete_env(key)
   def restore_env(key, value), do: System.put_env(key, value)
+
+  defmodule WorkEfficiencyFixtures do
+    def aggregate(:high_efficiency) do
+      %{
+        heuristic: SymphonyElixir.WorkEfficiency.heuristic(),
+        completed_diff_lines: 6,
+        productive_turns: 2,
+        unproductive_turns: 1,
+        total_tokens: 12,
+        diff_lines_per_1k_tokens: 500.0
+      }
+    end
+
+    def aggregate(:low_efficiency) do
+      %{
+        heuristic: SymphonyElixir.WorkEfficiency.heuristic(),
+        completed_diff_lines: 2,
+        productive_turns: 1,
+        unproductive_turns: 1,
+        total_tokens: 2_000,
+        diff_lines_per_1k_tokens: 1.0
+      }
+    end
+
+    def entry(name) do
+      calibration = aggregate(name)
+
+      %{
+        completed_diff_lines: calibration.completed_diff_lines,
+        productive_turns: calibration.productive_turns,
+        unproductive_turns: calibration.unproductive_turns,
+        codex_total_tokens: calibration.total_tokens
+      }
+    end
+  end
 
   def stop_default_http_server do
     case Enum.find(Supervisor.which_children(SymphonyElixir.Supervisor), fn
