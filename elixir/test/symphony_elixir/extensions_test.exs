@@ -342,6 +342,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     conn = get(build_conn(), "/api/v1/state")
     state_payload = json_response(conn, 200)
+    blocked_artifacts = state_payload["blocked"] |> List.first() |> Map.fetch!("workspace_artifacts")
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
@@ -351,9 +352,11 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
                  "issue_url" => "https://example.org/issues/MT-HTTP",
+                 "lifecycle" => nil,
                  "state" => "In Progress",
                  "worker_host" => nil,
                  "workspace_path" => nil,
+                 "workspace_artifacts" => public_workspace_artifacts(),
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
@@ -372,7 +375,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
                  "worker_host" => nil,
-                 "workspace_path" => nil
+                 "workspace_path" => nil,
+                 "workspace_artifacts" => nil
                }
              ],
              "blocked" => [
@@ -384,6 +388,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "error" => "codex turn requires operator input",
                  "worker_host" => "dm-dev2",
                  "workspace_path" => "/workspaces/MT-BLOCKED",
+                 "workspace_artifacts" => public_probe_error_artifacts(blocked_artifacts["probe_error"]),
                  "session_id" => "thread-blocked",
                  "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
                  "last_event" => "turn_input_required",
@@ -400,6 +405,8 @@ defmodule SymphonyElixir.ExtensionsTest do
              "work_efficiency" => %{
                "heuristic" => high_efficiency.heuristic,
                "completed_diff_lines" => high_efficiency.completed_diff_lines,
+               "reviewable_untracked_count" => 2,
+               "generated_untracked_count" => 1,
                "productive_turns" => high_efficiency.productive_turns,
                "unproductive_turns" => high_efficiency.unproductive_turns,
                "total_tokens" => high_efficiency.total_tokens,
@@ -417,12 +424,15 @@ defmodule SymphonyElixir.ExtensionsTest do
              "status" => "running",
              "workspace" => %{
                "path" => Path.join(Config.settings!().workspace.root, "MT-HTTP"),
-               "host" => nil
+               "host" => nil,
+               "artifacts" => public_workspace_artifacts()
              },
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
                "worker_host" => nil,
                "workspace_path" => nil,
+               "workspace_artifacts" => public_workspace_artifacts(),
+               "lifecycle" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
                "state" => "In Progress",
@@ -437,6 +447,8 @@ defmodule SymphonyElixir.ExtensionsTest do
              "work_efficiency" => %{
                "heuristic" => high_efficiency.heuristic,
                "completed_diff_lines" => high_efficiency.completed_diff_lines,
+               "reviewable_untracked_count" => 2,
+               "generated_untracked_count" => 1,
                "productive_turns" => high_efficiency.productive_turns,
                "unproductive_turns" => high_efficiency.unproductive_turns,
                "total_tokens" => high_efficiency.total_tokens,
@@ -448,6 +460,10 @@ defmodule SymphonyElixir.ExtensionsTest do
              "tracked" => %{}
            }
 
+    refute Map.has_key?(issue_payload, "workspace_artifacts")
+    refute Map.has_key?(issue_payload["workspace"]["artifacts"], "reviewable_untracked_paths")
+    refute Map.has_key?(issue_payload["running"]["workspace_artifacts"], "generated_untracked_paths")
+
     conn = get(build_conn(), "/api/v1/MT-RETRY")
 
     assert %{"status" => "retrying", "retry" => %{"attempt" => 2, "error" => "boom"}} =
@@ -456,6 +472,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert retry_payload["work_efficiency"] == %{
              "heuristic" => low_efficiency.heuristic,
              "completed_diff_lines" => low_efficiency.completed_diff_lines,
+             "reviewable_untracked_count" => low_efficiency.reviewable_untracked_count,
+             "generated_untracked_count" => low_efficiency.generated_untracked_count,
              "productive_turns" => low_efficiency.productive_turns,
              "unproductive_turns" => low_efficiency.unproductive_turns,
              "total_tokens" => low_efficiency.total_tokens,
@@ -592,6 +610,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     state_payload = json_response(get(build_conn(), "/api/v1/state"), 200)
+    blocked_artifacts = state_payload["blocked"] |> List.first() |> Map.fetch!("workspace_artifacts")
 
     assert state_payload["blocked"] == [
              %{
@@ -602,6 +621,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "error" => "codex turn requires operator input",
                "worker_host" => "dm-dev2",
                "workspace_path" => "/workspaces/MT-BLOCKED-RAW",
+               "workspace_artifacts" => public_probe_error_artifacts(blocked_artifacts["probe_error"]),
                "session_id" => "thread-blocked-raw",
                "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
                "last_event" => "turn_input_required",
@@ -611,6 +631,7 @@ defmodule SymphonyElixir.ExtensionsTest do
            ]
 
     issue_payload = json_response(get(build_conn(), "/api/v1/MT-BLOCKED-RAW"), 200)
+    issue_artifacts = issue_payload["blocked"]["workspace_artifacts"]
 
     assert issue_payload == %{
              "issue_identifier" => "MT-BLOCKED-RAW",
@@ -618,7 +639,8 @@ defmodule SymphonyElixir.ExtensionsTest do
              "status" => "blocked",
              "workspace" => %{
                "path" => "/workspaces/MT-BLOCKED-RAW",
-               "host" => "dm-dev2"
+               "host" => "dm-dev2",
+               "artifacts" => public_probe_error_artifacts(issue_artifacts["probe_error"])
              },
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => nil,
@@ -626,6 +648,7 @@ defmodule SymphonyElixir.ExtensionsTest do
              "blocked" => %{
                "worker_host" => "dm-dev2",
                "workspace_path" => "/workspaces/MT-BLOCKED-RAW",
+               "workspace_artifacts" => public_probe_error_artifacts(issue_artifacts["probe_error"]),
                "session_id" => "thread-blocked-raw",
                "state" => "Blocked",
                "error" => "codex turn requires operator input",
@@ -637,6 +660,8 @@ defmodule SymphonyElixir.ExtensionsTest do
              "work_efficiency" => %{
                "heuristic" => "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
                "completed_diff_lines" => 4,
+               "reviewable_untracked_count" => 0,
+               "generated_untracked_count" => 0,
                "productive_turns" => 1,
                "unproductive_turns" => 0,
                "total_tokens" => 12,
@@ -914,6 +939,7 @@ defmodule SymphonyElixir.ExtensionsTest do
             codex_input_tokens: 4,
             codex_output_tokens: 8,
             current_turn_diff_lines: 0,
+            workspace_artifacts: raw_workspace_artifacts(),
             started_at: DateTime.utc_now()
           }
         )
@@ -957,6 +983,44 @@ defmodule SymphonyElixir.ExtensionsTest do
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       work_efficiency: high_efficiency,
       rate_limits: %{"primary" => %{"remaining" => 11}}
+    }
+  end
+
+  defp raw_workspace_artifacts do
+    %{
+      reviewable_untracked_count: 2,
+      reviewable_untracked_paths: ["docs/plan.md", "fixtures/result.json"],
+      reviewable_untracked_summary: ["docs/plan.md", "fixtures/result.json"],
+      generated_untracked_count: 1,
+      generated_untracked_paths: ["tmp/scratch.txt"],
+      generated_untracked_summary: ["tmp/scratch.txt"],
+      ignored_untracked_count: 1,
+      ignored_untracked_paths: ["ignored/"],
+      ignored_untracked_summary: ["ignored/"],
+      probe_error: nil
+    }
+  end
+
+  defp public_workspace_artifacts do
+    %{
+      "reviewable_untracked_count" => 2,
+      "reviewable_untracked_summary" => ["docs/plan.md", "fixtures/result.json"],
+      "generated_untracked_count" => 1,
+      "generated_untracked_summary" => ["tmp/scratch.txt"],
+      "ignored_untracked_count" => 1,
+      "probe_error" => nil
+    }
+  end
+
+  defp public_probe_error_artifacts(probe_error)
+       when is_binary(probe_error) and probe_error != "" do
+    %{
+      "reviewable_untracked_count" => 0,
+      "reviewable_untracked_summary" => [],
+      "generated_untracked_count" => 0,
+      "generated_untracked_summary" => [],
+      "ignored_untracked_count" => 0,
+      "probe_error" => probe_error
     }
   end
 

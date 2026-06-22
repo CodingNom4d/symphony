@@ -727,6 +727,26 @@ defmodule SymphonyElixir.Orchestrator do
   defp codex_message_method(%{method: method}) when is_binary(method), do: method
   defp codex_message_method(_message), do: nil
 
+  defp running_lifecycle_state(running_entry) when is_map(running_entry) do
+    if stale_completion_message?(Map.get(running_entry, :last_codex_message), Map.get(running_entry, :last_codex_event)) do
+      "stale_completion"
+    else
+      "running"
+    end
+  end
+
+  defp running_lifecycle_state(_running_entry), do: "running"
+
+  defp stale_completion_message?(message, event) do
+    completion_event?(event) or completion_method?(codex_message_method(message))
+  end
+
+  defp completion_event?(event) when event in [:turn_completed, "turn_completed"], do: true
+  defp completion_event?(_event), do: false
+
+  defp completion_method?(method) when method in ["turn/completed", "codex/event/task_completed"], do: true
+  defp completion_method?(_method), do: false
+
   defp terminate_task(pid) when is_pid(pid) do
     case Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid) do
       :ok ->
@@ -1476,6 +1496,7 @@ defmodule SymphonyElixir.Orchestrator do
           runtime_seconds: running_seconds(metadata.started_at, now)
         }
       end)
+      |> Enum.map(&Map.put(&1, :lifecycle, running_lifecycle_state(&1)))
 
     retrying =
       state.retry_attempts
@@ -1564,6 +1585,10 @@ defmodule SymphonyElixir.Orchestrator do
   defp blocked_issue_url(%{issue_url: url}) when is_binary(url), do: url
   defp blocked_issue_url(%{issue: %Issue{url: url}}), do: url
   defp blocked_issue_url(_metadata), do: nil
+
+  @doc false
+  @spec running_lifecycle_state_for_test(map()) :: String.t()
+  def running_lifecycle_state_for_test(running_entry), do: running_lifecycle_state(running_entry)
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     running_entry =

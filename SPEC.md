@@ -1312,6 +1312,8 @@ SHOULD return:
 - `work_efficiency`
   - `heuristic` (string label explaining the metric is an efficiency heuristic, not a quality score)
   - `completed_diff_lines`
+  - `reviewable_untracked_count`
+  - `generated_untracked_count`
   - `productive_turns`
   - `unproductive_turns`
   - `total_tokens`
@@ -1365,6 +1367,8 @@ Work-efficiency heuristic:
 - One acceptable first version is:
   - track the latest non-empty line count from `turn/diff/updated`
   - only add those diff lines to aggregate work totals when the turn reaches a completed state
+  - separately surface reviewable untracked workspace artifacts and generated/cache/temp artifacts
+    in snapshot/dashboard output
   - count completed turns with zero diff lines as unproductive
   - exclude retry/backoff-only turns from productive totals
 - Any human-readable label or API field for this metric SHOULD clearly describe it as an efficiency
@@ -1418,6 +1422,9 @@ Enablement (extension):
 - Host a human-readable dashboard at `/`.
 - The returned document SHOULD depict the current state of the system (for example active sessions,
   retry delays, token consumption, runtime totals, recent events, and health/error indicators).
+- When workspace inspection is available, the dashboard SHOULD surface reviewable untracked
+  artifacts separately from generated/cache/temp directories and SHOULD distinguish stale completed
+  sessions from actively progressing sessions.
 - It is up to the implementation whether this is server-generated HTML or a client-side app that
   consumes the JSON API below.
 
@@ -1445,6 +1452,15 @@ Minimum endpoints:
           "issue_identifier": "MT-649",
           "issue_url": "https://tracker.example/issues/MT-649",
           "state": "In Progress",
+          "lifecycle": "stale_completion",
+          "workspace_artifacts": {
+            "reviewable_untracked_count": 2,
+            "reviewable_untracked_summary": ["docs/plan.md", "fixtures/result.json"],
+            "generated_untracked_count": 1,
+            "generated_untracked_summary": ["tmp/scratch.txt"],
+            "ignored_untracked_count": 0,
+            "probe_error": null
+          },
           "session_id": "thread-1-turn-1",
           "turn_count": 7,
           "last_event": "turn_completed",
@@ -1477,6 +1493,8 @@ Minimum endpoints:
       "work_efficiency": {
         "heuristic": "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
         "completed_diff_lines": 185,
+        "reviewable_untracked_count": 2,
+        "generated_untracked_count": 1,
         "productive_turns": 12,
         "unproductive_turns": 4,
         "total_tokens": 7400,
@@ -1497,13 +1515,30 @@ Minimum endpoints:
       "issue_id": "abc123",
       "status": "running",
       "workspace": {
-        "path": "/tmp/symphony_workspaces/MT-649"
+        "path": "/tmp/symphony_workspaces/MT-649",
+        "artifacts": {
+          "reviewable_untracked_count": 2,
+          "reviewable_untracked_summary": ["docs/plan.md", "fixtures/result.json"],
+          "generated_untracked_count": 1,
+          "generated_untracked_summary": ["tmp/scratch.txt"],
+          "ignored_untracked_count": 0,
+          "probe_error": null
+        }
       },
       "attempts": {
         "restart_count": 1,
         "current_retry_attempt": 2
       },
       "running": {
+        "lifecycle": "stale_completion",
+        "workspace_artifacts": {
+          "reviewable_untracked_count": 2,
+          "reviewable_untracked_summary": ["docs/plan.md", "fixtures/result.json"],
+          "generated_untracked_count": 1,
+          "generated_untracked_summary": ["tmp/scratch.txt"],
+          "ignored_untracked_count": 0,
+          "probe_error": null
+        },
         "session_id": "thread-1-turn-1",
         "turn_count": 7,
         "state": "In Progress",
@@ -1520,6 +1555,8 @@ Minimum endpoints:
       "work_efficiency": {
         "heuristic": "Completed diff lines per 1k tokens (efficiency heuristic only; not a quality score)",
         "completed_diff_lines": 42,
+        "reviewable_untracked_count": 2,
+        "generated_untracked_count": 1,
         "productive_turns": 3,
         "unproductive_turns": 1,
         "total_tokens": 2000,
