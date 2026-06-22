@@ -1,0 +1,24 @@
+{
+  "signal_schema_version": "tv.signal-envelope.v1",
+  "signal_idempotency_hash": null,
+  "operational_signal_ref": {
+    "alias": "signal_fixture_002"
+  },
+  "payload_hash": "sha256:example-rejected-payload",
+  "canonical_instrument_id": null,
+  "source_symbol": null,
+  "instrument_source": "tradingview",
+  "intended_side": null,
+  "source_event_time_utc": null,
+  "observed_at_utc": "2026-06-21T12:00:05Z",
+  "available_at_utc": "2026-06-21T12:00:05Z",
+  "finalized_at_utc": null,
+  "validation_status": "rejected",
+  "validation_reason_code": "invalid_payload",
+  "validation_failure_detail": "required symbol and action fields missing after safe redaction",
+  "signal_provenance_ref": null,
+  "decision_provenance_ref": null,
+  "strategy_id": "breakout-v1",
+  "strategy_version": "1.4.0",
+  "config_version_id": "cfg_20260621_01"
+}

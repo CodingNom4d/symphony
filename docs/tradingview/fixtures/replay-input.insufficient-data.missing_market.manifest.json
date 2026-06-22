@@ -1,0 +1,42 @@
+{
+  "signal_schema_version": "tv.signal-envelope.v1",
+  "context_contract_version": "tv.context-contract.v1",
+  "fixture_category": "insufficient context",
+  "fixture_label": "insufficient_data",
+  "canonical_reason_code": "missing_market",
+  "decision_time_basis": "signal.available_at_utc",
+  "available_at_rule": "rows with available_at_utc <= decision_time only",
+  "signal_ref": {
+    "fixture_alias": "signal_fixture_005",
+    "envelope_fixture": "signal-envelope.valid.missing-market-context.json"
+  },
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_005"
+  },
+  "decision_provenance_ref": {
+    "kind": "decision_provenance",
+    "alias": "decision_provenance_fixture_005"
+  },
+  "decision_time": "2026-06-21T12:00:20Z",
+  "decision_time_offset": "PT0S",
+  "canonical_instrument_id": "BTC-CAD",
+  "market_context": {
+    "source": "ndax-public",
+    "timezone": "UTC",
+    "session_calendar": "24x7-crypto",
+    "bar_orientation": "end_anchored",
+    "staleness_threshold": "PT5S",
+    "as_of_alignment": {
+      "cutoff_available_at_utc": "2026-06-21T12:00:20Z",
+      "matched_quote_row_id": null,
+      "matched_bar_row_id": null
+    },
+    "eligible_rows": []
+  },
+  "row_counts": {
+    "signals": 1,
+    "quotes": 0,
+    "bars": 0
+  }
+}
