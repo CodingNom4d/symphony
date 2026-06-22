@@ -582,7 +582,6 @@ defmodule SymphonyElixir.BoundaryGuardrails do
   defp parse_duration_seconds(_value), do: nil
 
   defp parse_part("", _multiplier), do: 0
-  defp parse_part(nil, _multiplier), do: 0
 
   defp parse_part(value, multiplier) do
     case Integer.parse(value) do
