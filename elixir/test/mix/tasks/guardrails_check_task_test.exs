@@ -58,6 +58,82 @@ defmodule Mix.Tasks.Guardrails.CheckTaskTest do
     end)
   end
 
+  test "scans repo-root tradingview fixtures when invoked from the elixir directory" do
+    in_temp_project(fn ->
+      write_checkpoint_doc!()
+
+      write_file!("docs/tradingview/fixtures/signal-envelope.valid.minimal.json", """
+      {
+        "signal_schema_version": "tv.signal-envelope.v1",
+        "operational_signal_ref": {
+          "alias": "signal_fixture_001"
+        }
+      }
+      """)
+
+      write_file!("docs/tradingview/fixtures/replay-input.accepted-replay.manifest.json", """
+      {
+        "signal_schema_version": "tv.signal-envelope.v1",
+        "decision_time": "2026-06-21T12:00:02Z",
+        "signal_ref": "signal_fixture_001",
+        "market_context": {
+          "staleness_threshold": "PT5S",
+          "eligible_rows": []
+        }
+      }
+      """)
+
+      File.mkdir_p!("elixir")
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/guardrails.check failed with 1 finding/, fn ->
+            File.cd!("elixir", fn -> Check.run([]) end)
+          end
+        end)
+
+      assert error_output =~ "docs/tradingview/fixtures/replay-input.accepted-replay.manifest.json"
+      assert error_output =~ "signal_ref must be an object"
+    end)
+  end
+
+  test "requires the tradingview checkpoint markdown alongside fixtures" do
+    in_temp_project(fn ->
+      write_file!("docs/tradingview/fixtures/signal-envelope.valid.minimal.json", """
+      {
+        "signal_schema_version": "tv.signal-envelope.v1",
+        "operational_signal_ref": {
+          "alias": "signal_fixture_001"
+        }
+      }
+      """)
+
+      File.mkdir_p!("elixir")
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/guardrails.check failed with 1 finding/, fn ->
+            File.cd!("elixir", fn -> Check.run([]) end)
+          end
+        end)
+
+      assert error_output =~ "docs/tradingview/signal-envelope-checkpoint.md"
+      assert error_output =~ "required checkpoint documentation file is missing"
+    end)
+  end
+
+  defp write_checkpoint_doc! do
+    write_file!(
+      "docs/tradingview/signal-envelope-checkpoint.md",
+      """
+      tv.signal-envelope.v1
+      signal_ref
+      eligible_rows
+      audit-only evidence
+      """
+    )
+  end
+
   defp in_temp_project(fun) do
     root =
       Path.join(
