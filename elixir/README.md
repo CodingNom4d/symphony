@@ -196,6 +196,16 @@ The observability UI now runs on a minimal Phoenix stack:
 make all
 ```
 
+The dry-run/public-data boundary suite is also available directly:
+
+```bash
+mix guardrails.check
+```
+
+`mix guardrails.check` scans the governed TradingView-adjacent dry-run roots declared in
+`SymphonyElixir.BoundaryGuardrails.policy/0`, requires no external services or credentials, and is
+a prerequisite for later data-capture, signal-replay, and backtesting work.
+
 Run the real external end-to-end test only when you want Symphony to create disposable Linear
 resources and launch a real `codex app-server` session:
 
