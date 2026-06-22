@@ -6,7 +6,7 @@ defmodule SymphonyElixir.StatusDashboard do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, HttpServer, WorkEfficiency}
+  alias SymphonyElixir.{Config, HttpServer, WorkEfficiency, WorkspaceArtifacts}
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixirWeb.ObservabilityPubSub
 
@@ -433,6 +433,8 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_work_efficiency(work_efficiency) when is_map(work_efficiency) do
     normalized = Map.get(work_efficiency, :diff_lines_per_1k_tokens, 0.0)
     completed_diff_lines = Map.get(work_efficiency, :completed_diff_lines, 0)
+    reviewable_untracked_count = Map.get(work_efficiency, :reviewable_untracked_count, 0)
+    generated_untracked_count = Map.get(work_efficiency, :generated_untracked_count, 0)
     total_tokens = Map.get(work_efficiency, :total_tokens, 0)
     productive_turns = Map.get(work_efficiency, :productive_turns, 0)
     unproductive_turns = Map.get(work_efficiency, :unproductive_turns, 0)
@@ -440,6 +442,7 @@ defmodule SymphonyElixir.StatusDashboard do
     colorize("#{Float.round(normalized, 1)} lines", @ansi_cyan) <>
       colorize(" | ", @ansi_gray) <>
       colorize("#{format_count(completed_diff_lines)} diff lines / #{format_count(total_tokens)} tokens", @ansi_yellow) <>
+      format_untracked_efficiency(reviewable_untracked_count, generated_untracked_count, completed_diff_lines) <>
       colorize(" | ", @ansi_gray) <>
       colorize("productive #{format_count(productive_turns)}", @ansi_green) <>
       colorize(" | ", @ansi_gray) <>
@@ -577,12 +580,18 @@ defmodule SymphonyElixir.StatusDashboard do
           codex_totals: codex_totals
         } = snapshot
         when is_list(running) and is_list(retrying) ->
+          running = Enum.map(running, &enrich_entry_artifacts/1)
+          retrying = Enum.map(retrying, &enrich_entry_artifacts/1)
+          blocked = Enum.map(Map.get(snapshot, :blocked, []), &enrich_entry_artifacts/1)
+          artifact_totals = workspace_artifact_totals(running, retrying, blocked)
+          work_efficiency = WorkEfficiency.aggregate(Map.get(snapshot, :work_efficiency), Map.get(codex_totals, :total_tokens), artifact_totals)
+
           {:ok,
            %{
              running: running,
              retrying: retrying,
              codex_totals: codex_totals,
-             work_efficiency: Map.get(snapshot, :work_efficiency),
+             work_efficiency: work_efficiency,
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
            }}
@@ -593,6 +602,36 @@ defmodule SymphonyElixir.StatusDashboard do
     else
       :error
     end
+  end
+
+  defp enrich_entry_artifacts(entry) when is_map(entry) do
+    artifacts =
+      Map.get(entry, :workspace_artifacts) ||
+        maybe_probe_workspace_artifacts(entry)
+
+    Map.put(entry, :workspace_artifacts, artifacts)
+  end
+
+  defp maybe_probe_workspace_artifacts(entry) do
+    case Map.get(entry, :workspace_path) do
+      path when is_binary(path) and path != "" ->
+        WorkspaceArtifacts.cached_probe(path, Map.get(entry, :worker_host))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp workspace_artifact_totals(running, retrying, blocked) do
+    Enum.reduce(running ++ retrying ++ blocked, WorkspaceArtifacts.empty(), fn entry, acc ->
+      artifacts = Map.get(entry, :workspace_artifacts) || %{}
+
+      %{
+        acc
+        | reviewable_untracked_count: Map.get(acc, :reviewable_untracked_count, 0) + Map.get(artifacts, :reviewable_untracked_count, 0),
+          generated_untracked_count: Map.get(acc, :generated_untracked_count, 0) + Map.get(artifacts, :generated_untracked_count, 0)
+      }
+    end)
   end
 
   defp format_running_rows(running, running_event_width) do
@@ -611,7 +650,7 @@ defmodule SymphonyElixir.StatusDashboard do
   # credo:disable-for-next-line
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
-    state = running_entry.state || "unknown"
+    state = Map.get(running_entry, :lifecycle) || running_entry.state || "unknown"
     state_display = format_cell(to_string(state), @running_stage_width)
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
     pid = format_cell(running_entry.codex_app_server_pid || "n/a", @running_pid_width)
@@ -620,17 +659,27 @@ defmodule SymphonyElixir.StatusDashboard do
     turn_count = Map.get(running_entry, :turn_count, 0)
     age = format_cell(format_runtime_and_turns(runtime_seconds, turn_count), @running_age_width)
     event = running_entry.last_codex_event || "none"
-    event_label = format_cell(summarize_message(running_entry.last_codex_message), running_event_width)
+
+    event_label =
+      running_entry
+      |> summarize_running_event()
+      |> format_cell(running_event_width)
 
     tokens = format_count(total_tokens) |> format_cell(@running_tokens_width, :right)
 
     status_color =
-      case event do
-        :none -> @ansi_red
-        "codex/event/token_count" -> @ansi_yellow
-        "codex/event/task_started" -> @ansi_green
-        "turn_completed" -> @ansi_magenta
-        _ -> @ansi_blue
+      case Map.get(running_entry, :lifecycle) do
+        "stale_completion" ->
+          @ansi_orange
+
+        _ ->
+          case event do
+            :none -> @ansi_red
+            "codex/event/token_count" -> @ansi_yellow
+            "codex/event/task_started" -> @ansi_green
+            "turn_completed" -> @ansi_magenta
+            _ -> @ansi_blue
+          end
       end
 
     [
@@ -658,6 +707,60 @@ defmodule SymphonyElixir.StatusDashboard do
   @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
   def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
     do: format_running_summary(running_entry, running_event_width(terminal_columns))
+
+  defp format_untracked_efficiency(reviewable_untracked_count, generated_untracked_count, completed_diff_lines) do
+    []
+    |> maybe_append_untracked_segment(reviewable_untracked_count, completed_diff_lines)
+    |> maybe_append_generated_segment(generated_untracked_count)
+    |> Enum.join("")
+  end
+
+  defp maybe_append_untracked_segment(segments, reviewable_untracked_count, completed_diff_lines)
+       when is_integer(reviewable_untracked_count) and reviewable_untracked_count > 0 do
+    notice =
+      if completed_diff_lines == 0 do
+        "reviewable untracked artifacts present"
+      else
+        "reviewable untracked #{format_count(reviewable_untracked_count)}"
+      end
+
+    segments ++ [colorize(" | ", @ansi_gray), colorize(notice, @ansi_orange)]
+  end
+
+  defp maybe_append_untracked_segment(segments, _reviewable_untracked_count, _completed_diff_lines), do: segments
+
+  defp maybe_append_generated_segment(segments, generated_untracked_count)
+       when is_integer(generated_untracked_count) and generated_untracked_count > 0 do
+    segments ++ [colorize(" | ", @ansi_gray), colorize("generated #{format_count(generated_untracked_count)}", @ansi_dim)]
+  end
+
+  defp maybe_append_generated_segment(segments, _generated_untracked_count), do: segments
+
+  defp summarize_running_event(running_entry) when is_map(running_entry) do
+    message = summarize_message(Map.get(running_entry, :last_codex_message))
+    artifacts = Map.get(running_entry, :workspace_artifacts) || %{}
+    reviewable_untracked_count = Map.get(artifacts, :reviewable_untracked_count, 0)
+    summary = Map.get(artifacts, :reviewable_untracked_summary, [])
+    generated_summary = Map.get(artifacts, :generated_untracked_summary, [])
+    probe_error = Map.get(artifacts, :probe_error)
+
+    cond do
+      is_binary(probe_error) and probe_error != "" ->
+        "#{message} | artifact probe failed: #{probe_error}"
+
+      Map.get(running_entry, :lifecycle) == "stale_completion" and reviewable_untracked_count > 0 ->
+        "stale completion; reviewable artifacts: #{Enum.join(summary, ", ")}"
+
+      reviewable_untracked_count > 0 ->
+        "#{message} | untracked: #{Enum.join(summary, ", ")}"
+
+      generated_summary != [] ->
+        "#{message} | generated: #{Enum.join(generated_summary, ", ")}"
+
+      true ->
+        message
+    end
+  end
 
   @doc false
   @spec format_tps_for_test(number()) :: String.t()

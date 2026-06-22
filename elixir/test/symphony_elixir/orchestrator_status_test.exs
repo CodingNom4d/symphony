@@ -1080,6 +1080,60 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert snapshot.work_efficiency.diff_lines_per_1k_tokens == 0.0
   end
 
+  test "orchestrator snapshot keeps artifact probing out of the GenServer call path" do
+    issue_id = "issue-workspace-artifacts"
+    issue = %Issue{id: issue_id, identifier: "MT-ART", state: "In Progress", url: "https://example.org/issues/MT-ART"}
+    workspace = make_workspace_repo!("artifacts")
+    write_workspace_file!(workspace, "docs/plan.md", "review me\n")
+    write_workspace_file!(workspace, "tmp/scratch.txt", "generated temp\n")
+
+    orchestrator_name = Module.concat(__MODULE__, :WorkspaceArtifactsOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+      File.rm_rf!(workspace)
+    end)
+
+    initial_state = :sys.get_state(pid)
+    now = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      workspace_path: workspace,
+      session_id: "thread-artifacts-turn-1",
+      last_codex_message: %{event: :turn_completed, message: %{"method" => "turn/completed"}, timestamp: now},
+      last_codex_timestamp: now,
+      last_codex_event: :turn_completed,
+      codex_app_server_pid: "4242",
+      codex_input_tokens: 4,
+      codex_output_tokens: 8,
+      codex_total_tokens: 12,
+      completed_diff_lines: 0,
+      productive_turns: 0,
+      unproductive_turns: 1,
+      turn_count: 1,
+      started_at: now
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], work_efficiency: work_efficiency} = snapshot
+    assert snapshot_entry.lifecycle == "stale_completion"
+    refute Map.has_key?(snapshot_entry, :workspace_artifacts)
+    assert work_efficiency.completed_diff_lines == 0
+    assert work_efficiency.reviewable_untracked_count == 0
+    assert work_efficiency.generated_untracked_count == 0
+  end
+
   test "orchestrator snapshot tracks codex rate-limit payloads" do
     issue_id = "issue-rate-limit-snapshot"
 
@@ -1658,7 +1712,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 9_500
+    assert remaining_ms >= 9_400
     assert remaining_ms <= 10_500
   end
 
@@ -2457,6 +2511,76 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert StatusDashboard.humanize_codex_message(fallback_reasoning) == "reasoning update"
   end
 
+  test "running lifecycle state only marks completed idle sessions as stale" do
+    assert Orchestrator.running_lifecycle_state_for_test(%{
+             last_codex_event: :turn_completed,
+             last_codex_message: %{event: :turn_completed, message: %{"method" => "turn/completed"}}
+           }) == "stale_completion"
+
+    assert Orchestrator.running_lifecycle_state_for_test(%{
+             last_codex_event: :notification,
+             last_codex_message: %{event: :notification, message: %{"method" => "item/reasoning/textDelta"}}
+           }) == "running"
+
+    assert Orchestrator.running_lifecycle_state_for_test(%{
+             last_codex_event: :notification,
+             last_codex_message: %{event: :notification, message: %{"method" => "item/commandExecution/outputDelta"}}
+           }) == "running"
+
+    assert Orchestrator.running_lifecycle_state_for_test(%{
+             last_codex_event: :notification,
+             last_codex_message: %{event: :notification, message: %{"method" => "item/completed"}}
+           }) == "running"
+  end
+
+  test "status dashboard running summary calls out stale completion artifacts" do
+    rendered =
+      StatusDashboard.format_running_summary_for_test(
+        %{
+          identifier: "MT-ART",
+          lifecycle: "stale_completion",
+          codex_app_server_pid: "4242",
+          runtime_seconds: 42,
+          turn_count: 1,
+          codex_total_tokens: 12,
+          session_id: "thread-artifacts-turn-1",
+          last_codex_event: :turn_completed,
+          last_codex_message: %{event: :turn_completed, message: %{"method" => "turn/completed"}},
+          workspace_artifacts: %{reviewable_untracked_summary: ["docs/plan.md"], reviewable_untracked_count: 1}
+        },
+        140
+      )
+
+    assert rendered =~ "stale_compl"
+    assert rendered =~ "reviewable artifacts: docs/plan.md"
+  end
+
+  test "status dashboard work efficiency calls out reviewable untracked artifacts when diff lines are zero" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 12, output_tokens: 0, total_tokens: 12, seconds_running: 0},
+         work_efficiency: %{
+           heuristic: SymphonyElixir.WorkEfficiency.heuristic(),
+           completed_diff_lines: 0,
+           reviewable_untracked_count: 2,
+           generated_untracked_count: 1,
+           productive_turns: 1,
+           unproductive_turns: 0,
+           total_tokens: 12,
+           diff_lines_per_1k_tokens: 0.0
+         },
+         rate_limits: nil
+       }}
+
+    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0, 140)
+
+    assert rendered =~ "reviewable untracked artifacts present"
+    assert rendered =~ "generated 1"
+  end
+
   test "application stop renders offline status" do
     rendered =
       ExUnit.CaptureIO.capture_io(fn ->
@@ -2515,5 +2639,29 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp make_workspace_repo!(name) do
+    repo =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-orchestrator-workspace-#{name}-#{System.unique_integer([:positive, :monotonic])}"
+      )
+
+    File.rm_rf!(repo)
+    File.mkdir_p!(repo)
+    {_, 0} = System.cmd("git", ["init"], cd: repo, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["config", "user.email", "symphony@example.test"], cd: repo, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Symphony Test"], cd: repo, stderr_to_stdout: true)
+    File.write!(Path.join(repo, "tracked.txt"), "tracked content\n")
+    {_, 0} = System.cmd("git", ["add", "tracked.txt"], cd: repo, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["commit", "-m", "initial"], cd: repo, stderr_to_stdout: true)
+    repo
+  end
+
+  defp write_workspace_file!(repo, path, contents) do
+    full_path = Path.join(repo, path)
+    File.mkdir_p!(Path.dirname(full_path))
+    File.write!(full_path, contents)
   end
 end

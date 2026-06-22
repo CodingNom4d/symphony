@@ -117,6 +117,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="metric-detail numeric">
               <%= format_int(work_efficiency(@payload).completed_diff_lines) %> diff lines / <%= format_int(work_efficiency(@payload).total_tokens) %> tokens
             </p>
+            <%= if Map.get(work_efficiency(@payload), :reviewable_untracked_count, 0) > 0 do %>
+              <p class="metric-detail">
+                Reviewable untracked: <%= format_int(work_efficiency(@payload).reviewable_untracked_count) %>
+              </p>
+            <% end %>
+            <%= if Map.get(work_efficiency(@payload), :generated_untracked_count, 0) > 0 do %>
+              <p class="metric-detail">
+                Generated/cache artifacts: <%= format_int(work_efficiency(@payload).generated_untracked_count) %>
+              </p>
+            <% end %>
             <p class="metric-detail">Efficiency heuristic only, not a quality score.</p>
           </article>
         </section>
@@ -172,8 +182,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       </div>
                     </td>
                     <td>
-                      <span class={state_badge_class(entry.state)}>
-                        <%= entry.state %>
+                      <span class={state_badge_class(entry.lifecycle || entry.state)}>
+                        <%= entry.lifecycle || entry.state %>
                       </span>
                     </td>
                     <td>
@@ -198,8 +208,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <div class="detail-stack">
                         <span
                           class="event-text"
-                          title={entry.last_message || to_string(entry.last_event || "n/a")}
-                        ><%= entry.last_message || to_string(entry.last_event || "n/a") %></span>
+                          title={running_event_text(entry)}
+                        ><%= running_event_text(entry) %></span>
                         <span class="muted event-meta">
                           <%= entry.last_event || "n/a" %>
                           <%= if entry.last_event_at do %>
@@ -395,6 +405,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
       %{
         diff_lines_per_1k_tokens: 0.0,
         completed_diff_lines: 0,
+        reviewable_untracked_count: 0,
         total_tokens: 0
       }
   end
@@ -462,6 +473,41 @@ defmodule SymphonyElixirWeb.DashboardLive do
       true -> base
     end
   end
+
+  defp running_event_text(entry) do
+    message = entry.last_message || to_string(entry.last_event || "n/a")
+    artifacts = Map.get(entry, :workspace_artifacts) || %{}
+
+    artifact_event_text(
+      message,
+      entry.lifecycle,
+      Map.get(artifacts, :probe_error),
+      Map.get(artifacts, :reviewable_untracked_summary, []),
+      Map.get(artifacts, :generated_untracked_summary, [])
+    )
+  end
+
+  defp artifact_event_text(message, _lifecycle, probe_error, _summary, _generated_summary)
+       when is_binary(probe_error) and probe_error != "" do
+    message <> " | artifact probe failed: " <> probe_error
+  end
+
+  defp artifact_event_text(_message, "stale_completion", _probe_error, summary, _generated_summary)
+       when summary != [] do
+    "stale completion; reviewable artifacts: " <> Enum.join(summary, ", ")
+  end
+
+  defp artifact_event_text(message, _lifecycle, _probe_error, summary, _generated_summary)
+       when summary != [] do
+    message <> " | untracked: " <> Enum.join(summary, ", ")
+  end
+
+  defp artifact_event_text(message, _lifecycle, _probe_error, _summary, generated_summary)
+       when generated_summary != [] do
+    message <> " | generated: " <> Enum.join(generated_summary, ", ")
+  end
+
+  defp artifact_event_text(message, _lifecycle, _probe_error, _summary, _generated_summary), do: message
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)

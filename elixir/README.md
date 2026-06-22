@@ -32,9 +32,9 @@ entries are in memory only; restarting the orchestrator clears that blocked map,
 Linear issue can become a dispatch candidate again after restart.
 
 Observability surfaces also expose a conservative work-efficiency heuristic based on completed
-diff-line signals and cumulative Codex tokens. It is labeled explicitly as an efficiency heuristic,
-not a quality score, and retries/backoffs or completed turns without observed diff progress do not
-count as productive work.
+diff-line signals, reviewable untracked workspace artifacts, and cumulative Codex tokens. It is
+labeled explicitly as an efficiency heuristic, not a quality score, and retries/backoffs or
+completed turns without observed diff progress do not count as productive work.
 
 ## How to use it
 
@@ -174,6 +174,11 @@ The observability UI now runs on a minimal Phoenix stack:
 - LiveView for the dashboard at `/`
 - JSON API for operational debugging under `/api/v1/*`
 - Work-efficiency heuristic surfaced as raw diff/token counts plus `diff_lines_per_1k_tokens`
+- Running-session rows and issue detail payloads include `workspace_artifacts` summaries for
+  reviewable untracked files, generated/cache directories, and probe errors when artifact
+  inspection is unavailable
+- Running-session rows can be labeled `stale_completion` when the latest agent message completed
+  but no active command/reasoning signal remains
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
 - Tracker issue identifiers link to the tracker-provided URL when it uses `http` or `https`
