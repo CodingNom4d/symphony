@@ -123,6 +123,26 @@ defmodule SymphonyElixir.NdaxPublicCapabilityGateTest do
     assert Enum.any?(decision["reason"], &String.contains?(&1, "SubscribeTicker does not support Interval 1"))
   end
 
+  test "gate preserves the existing public REST order-book collector as legacy dry-run scope" do
+    manifest = read_json!(@manifest_path)
+    forbidden_policy = manifest["forbidden_policy"]
+
+    assert Enum.any?(
+             forbidden_policy,
+             &String.contains?(&1, "existing tested public REST /order-book dry-run collector")
+           )
+
+    assert Enum.any?(
+             forbidden_policy,
+             &String.contains?(&1, "new NDAX REST paths are forbidden for 1-second capture")
+           )
+
+    refute Enum.member?(
+             forbidden_policy,
+             "All NDAX REST paths are forbidden until a later human-approved issue proves exact public paths and fields."
+           )
+  end
+
   defp fixture!(name), do: read_json!(Path.join(@fixture_root, name))
 
   defp read_json!(path) do
