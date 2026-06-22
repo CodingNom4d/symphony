@@ -78,6 +78,8 @@ defmodule SymphonyElixir.TestSupport do
       %{
         heuristic: SymphonyElixir.WorkEfficiency.heuristic(),
         completed_diff_lines: 6,
+        reviewable_untracked_count: 0,
+        generated_untracked_count: 0,
         productive_turns: 2,
         unproductive_turns: 1,
         total_tokens: 12,
@@ -89,6 +91,8 @@ defmodule SymphonyElixir.TestSupport do
       %{
         heuristic: SymphonyElixir.WorkEfficiency.heuristic(),
         completed_diff_lines: 2,
+        reviewable_untracked_count: 0,
+        generated_untracked_count: 0,
         productive_turns: 1,
         unproductive_turns: 1,
         total_tokens: 2_000,
