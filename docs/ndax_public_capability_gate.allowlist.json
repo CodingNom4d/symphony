@@ -218,8 +218,9 @@
     }
   ],
   "forbidden_policy": [
-    "All NDAX transports other than wss://api.ndax.io/WSGateway/ are forbidden for this project gate.",
-    "All NDAX REST paths are forbidden until a later human-approved issue proves exact public paths and fields.",
+    "All new NDAX capture transports other than wss://api.ndax.io/WSGateway/ are forbidden for this project gate.",
+    "All new NDAX REST paths are forbidden for 1-second capture, replay, or backtesting until a later human-approved issue proves exact public paths and fields.",
+    "The existing tested public REST /order-book dry-run collector remains a legacy/current public-data surface until a later human-approved issue replaces or quarantines it.",
     "All private, authenticated, account, trading, funding, ticket, treasury, and report methods are forbidden.",
     "All methods not named in method_allowlist are forbidden.",
     "Unknown or newly discovered NDAX methods fail closed until a human-approved issue adds them."

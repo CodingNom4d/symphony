@@ -2,7 +2,9 @@
 
 Captured on 2026-06-21 for COD-25.
 
-This gate is intentionally narrow. The project may only use the NDAX public websocket gateway and the exact method/request shapes listed in [docs/ndax_public_capability_gate.allowlist.json](./ndax_public_capability_gate.allowlist.json). Every other NDAX path is forbidden unless a later human-approved issue expands the allowlist.
+This gate is intentionally narrow. It governs future NDAX public websocket capture work, especially the 1-second capture path, and allows only the public websocket gateway plus the exact method/request shapes listed in [docs/ndax_public_capability_gate.allowlist.json](./ndax_public_capability_gate.allowlist.json). Every other NDAX path is forbidden for that new capture surface unless a later human-approved issue expands the allowlist.
+
+This gate does not revoke the repository's existing tested public REST `/order-book` dry-run collector. That collector remains a legacy/current public-data surface for the dry-run stack until a later human-approved issue replaces or quarantines it. New 1-second capture, replay, and backtesting work must not expand REST usage through this gate.
 
 ## Sources
 
@@ -33,8 +35,8 @@ Committed fixture evidence for those exact payload shapes lives under [elixir/te
 
 These are forbidden now:
 
-- Any NDAX transport other than `wss://api.ndax.io/WSGateway/`
-- Any NDAX REST path
+- Any new NDAX capture transport other than `wss://api.ndax.io/WSGateway/`
+- Any new NDAX REST path for 1-second capture, replay, or backtesting
 - Any private, authenticated, account, trading, funding, ticket, treasury, or reporting method
 - `GetTickerHistory`
 - `GetTradesHistory`
@@ -67,7 +69,7 @@ The ExUnit gate in [elixir/test/symphony_elixir/ndax_public_capability_gate_test
 
 ## 1-Second Capture Decision
 
-Decision: feasible through public websocket event feeds, infeasible through REST polling.
+Decision: 1-second capture is feasible through public websocket event feeds, infeasible through REST polling.
 
 Reason:
 
