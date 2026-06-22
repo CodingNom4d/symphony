@@ -1,0 +1,49 @@
+{
+  "signal_schema_version": "tv.signal-envelope.v1",
+  "context_contract_version": "tv.context-contract.v1",
+  "fixture_category": "future data rejected",
+  "fixture_label": "future_data_rejected",
+  "canonical_reason_code": "future_quote",
+  "decision_time_basis": "signal.available_at_utc",
+  "available_at_rule": "rows with available_at_utc <= decision_time only",
+  "signal_ref": {
+    "fixture_alias": "signal_fixture_003",
+    "envelope_fixture": "signal-envelope.valid.future-quote-context.json"
+  },
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_003"
+  },
+  "decision_provenance_ref": {
+    "kind": "decision_provenance",
+    "alias": "decision_provenance_fixture_003"
+  },
+  "decision_time": "2026-06-21T12:00:02Z",
+  "decision_time_offset": "PT0S",
+  "canonical_instrument_id": "BTC-CAD",
+  "market_context": {
+    "source": "ndax-public",
+    "timezone": "UTC",
+    "session_calendar": "24x7-crypto",
+    "bar_orientation": "end_anchored",
+    "staleness_threshold": "PT5S",
+    "as_of_alignment": {
+      "cutoff_available_at_utc": "2026-06-21T12:00:02Z",
+      "nearest_quote_before_row_id": null
+    },
+    "eligible_rows": [],
+    "audit_evidence": {
+      "nearest_quote_after": {
+        "row_id": "quote_120003",
+        "available_at_utc": "2026-06-21T12:00:03Z",
+        "source_event_time_utc": "2026-06-21T12:00:03Z"
+      }
+    }
+  },
+  "row_counts": {
+    "signals": 1,
+    "quotes": 1,
+    "bars": 0
+  },
+  "notes": "nearest_quote_after is audit-only evidence and must not be used as strategy input"
+}

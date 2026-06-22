@@ -1,0 +1,30 @@
+{
+  "signal_schema_version": "tv.signal-envelope.v1",
+  "signal_idempotency_hash": "sha256:example-future-quote-idempotency",
+  "operational_signal_ref": {
+    "alias": "signal_fixture_003"
+  },
+  "payload_hash": "sha256:example-future-quote-redacted-payload",
+  "canonical_instrument_id": "BTC-CAD",
+  "source_symbol": "BTCCAD",
+  "instrument_source": "tradingview",
+  "intended_side": "buy",
+  "source_event_time_utc": "2026-06-21T12:00:00Z",
+  "observed_at_utc": "2026-06-21T12:00:02Z",
+  "available_at_utc": "2026-06-21T12:00:02Z",
+  "finalized_at_utc": null,
+  "validation_status": "accepted",
+  "validation_reason_code": "accepted_replay",
+  "validation_failure_detail": null,
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_003"
+  },
+  "decision_provenance_ref": {
+    "kind": "decision_provenance",
+    "alias": "decision_provenance_fixture_003"
+  },
+  "strategy_id": "breakout-v1",
+  "strategy_version": "1.4.0",
+  "config_version_id": "cfg_20260621_01"
+}
