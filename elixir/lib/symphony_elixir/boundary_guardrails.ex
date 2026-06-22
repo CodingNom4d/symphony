@@ -172,10 +172,9 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     end
   end
 
-  defp line_matches(relative_path, source, patterns) do
-    candidates = [relative_path | String.split(source, "\n")]
-
-    candidates
+  defp line_matches(_relative_path, source, patterns) do
+    source
+    |> String.split("\n")
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {line_text, line_number} ->
       if Enum.any?(patterns, &Regex.match?(&1, line_text)) do
@@ -263,5 +262,7 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     absolute_path
     |> Path.expand()
     |> Path.relative_to(project_root)
+    |> Path.split()
+    |> Enum.join("/")
   end
 end

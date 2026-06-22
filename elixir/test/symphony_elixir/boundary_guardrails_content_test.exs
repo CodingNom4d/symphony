@@ -81,6 +81,32 @@ defmodule SymphonyElixir.BoundaryGuardrailsContentTest do
     end)
   end
 
+  test "does not flag benign path names without forbidden source content" do
+    in_temp_project(fn root ->
+      write_file!(root, "lib/symphony_elixir/dry_run/payment_service.ex", """
+      defmodule SymphonyElixir.DryRun.PaymentService do
+        def transform(event), do: {:ok, event}
+      end
+      """)
+
+      write_file!(root, "lib/symphony_elixir/trading_view/headers_projection.ex", """
+      defmodule SymphonyElixir.TradingView.HeadersProjection do
+        def render(value), do: to_string(value)
+      end
+      """)
+
+      findings = BoundaryGuardrails.findings(root)
+
+      refute Enum.any?(
+               findings,
+               &(&1.path in [
+                   "lib/symphony_elixir/dry_run/payment_service.ex",
+                   "lib/symphony_elixir/trading_view/headers_projection.ex"
+                 ])
+             )
+    end)
+  end
+
   defp assert_rule(findings, path, rule) do
     assert Enum.any?(findings, fn finding -> finding.path == path and finding.rule == rule end),
            "expected #{path} to report #{inspect(rule)}, got #{inspect(findings)}"

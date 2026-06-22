@@ -42,6 +42,8 @@ defmodule SymphonyElixir.BoundaryGuardrailsImportsTest do
       assert_rule(findings, "lib/symphony_elixir/strategy/http_server.ex")
       assert_rule(findings, "lib/symphony_elixir/replay/network_use.ex")
       assert_rule(findings, "lib/symphony_elixir/backtest/direct_call.ex")
+
+      assert Enum.all?(findings, &(not String.contains?(&1.path, "\\")))
     end)
   end
 
