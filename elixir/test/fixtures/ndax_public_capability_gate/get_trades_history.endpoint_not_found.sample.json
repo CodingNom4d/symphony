@@ -1,0 +1,5 @@
+{
+  "message_type": 5,
+  "method": "GetTradesHistory",
+  "payload": "Endpoint Not Found"
+}
