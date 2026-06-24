@@ -51,6 +51,18 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
     end)
   end
 
+  test "rejects a replay manifest whose envelope fixture is not a JSON object" do
+    in_temp_project(fn root ->
+      write_fixture_set!(root)
+
+      Path.join(root, "docs/tradingview/fixtures/signal-envelope.valid.minimal.json")
+      |> File.write!(Jason.encode_to_iodata!([]))
+
+      assert_rule(root, :signal_ref_alias_mismatch)
+      assert_message(root, "must be a JSON object")
+    end)
+  end
+
   test "rejects replay manifest signal_ref objects that include direct locator fields" do
     in_temp_project(fn root ->
       write_fixture_set!(
@@ -112,6 +124,39 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
     end)
   end
 
+  test "rejects replay manifests with invalid timing fields" do
+    in_temp_project(fn root ->
+      write_fixture_set!(
+        root,
+        manifest: %{
+          "decision_time" => "not-a-datetime",
+          "market_context" => %{"staleness_threshold" => "five seconds"}
+        }
+      )
+
+      assert_rule(root, :fixture_context_timing)
+    end)
+  end
+
+  test "rejects replay manifests with malformed market_context" do
+    in_temp_project(fn root ->
+      write_fixture_set!(
+        root,
+        manifest: %{"market_context" => []}
+      )
+
+      assert_rule(root, :fixture_context_shape)
+    end)
+  end
+
+  test "rejects eligible rows entries that are not objects" do
+    in_temp_project(fn root ->
+      write_fixture_set!(root, eligible_rows: ["not-a-row-object"])
+
+      assert_rule(root, :eligible_rows_shape)
+    end)
+  end
+
   test "rejects future-only evidence outside audit_evidence" do
     in_temp_project(fn root ->
       write_fixture_set!(
@@ -159,6 +204,13 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
 
     assert Enum.any?(findings, &(&1.rule == rule)),
            "expected #{inspect(rule)} in #{inspect(findings)}"
+  end
+
+  defp assert_message(root, message_fragment) do
+    findings = BoundaryGuardrails.findings(root)
+
+    assert Enum.any?(findings, &String.contains?(&1.message, message_fragment)),
+           "expected message containing #{inspect(message_fragment)} in #{inspect(findings)}"
   end
 
   defp in_temp_project(fun) do

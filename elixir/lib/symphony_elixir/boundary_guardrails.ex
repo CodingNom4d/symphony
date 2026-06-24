@@ -67,11 +67,24 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     "eligible_rows",
     "audit-only evidence"
   ]
+  @checkpoint_text_allow_patterns [
+    ~r/^\s*-\s*no\s+/i,
+    ~r/^\s*-\s*(raw request body|webhook secrets or signatures|request headers|cookies|query strings|credential-like values|oversize secret-like free text)\s*$/i,
+    ~r/^\s*-\s*payload contains secret-like material, even if the sensitive field could be isolated or redacted\s*$/i,
+    ~r/^\s*-\s*retain no secret-bearing field values in normalized rows, exports, manifests, or fixtures\s*$/i,
+    ~r/^\s*-\s*no private surfaces or credentials are introduced\s*$/i,
+    ~r/^\|\s*`invalid_payload`\s*\|.*\|\s*Payload missing required fields, malformed, secret-like, or oversize\s*\|$/i,
+    ~r/quote\/trade\/bar/i
+  ]
+  @markdown_text_allow_patterns [
+    ~r/^\s*(-\s*)?(do not|don't|never|must not|must never|no)\b/i
+  ]
 
   @ndax_private_patterns [
     ~r/ndax[_\W]*(private|account|trading|auth|order|withdraw|deposit|balance|position)/i,
     ~r{/(Account|Auth|Order|Orders|Trade|Trades|Balances|Positions|Withdraw|Deposit)(/|$)}i
   ]
+  @private_endpoint_pattern ~r{/(Account|Auth|Order|Orders|Trade|Trades|Balances|Positions|Withdraw|Deposit)(/|$)}
 
   @questrade_patterns [
     ~r/questrade/i,
@@ -201,53 +214,67 @@ defmodule SymphonyElixir.BoundaryGuardrails do
         json_fixture_findings(project_root, relative_path, absolute_path, source)
 
       relative_path == @required_checkpoint_doc ->
-        validate_checkpoint_doc(relative_path, source)
+        validate_checkpoint_doc(relative_path, source) ++
+          text_findings(relative_path, source, @checkpoint_text_allow_patterns)
 
       markdown_doc?(relative_path) ->
-        []
+        text_findings(relative_path, source, @markdown_text_allow_patterns)
 
       true ->
-        [
-          scan_text_rule(
-            relative_path,
-            source,
-            :ndax_private_surface,
-            "ndax private/account/trading surface",
-            @ndax_private_patterns
-          ),
-          scan_text_rule(
-            relative_path,
-            source,
-            :questrade_auth_account,
-            "questrade auth/account implementation",
-            @questrade_patterns,
-            2
-          ),
-          scan_text_rule(
-            relative_path,
-            source,
-            :credential_material,
-            "credential or account identifier material",
-            @credential_patterns
-          ),
-          scan_text_rule(
-            relative_path,
-            source,
-            :webhook_persistence,
-            "secret-like webhook persistence or raw request storage",
-            @webhook_persistence_patterns
-          ),
-          scan_text_rule(
-            relative_path,
-            source,
-            :listener_or_scheduler,
-            "listener, scheduler, daemon, tunnel, or service creation",
-            @listener_patterns
-          ),
-          scan_import_rule(relative_path, source)
-        ]
+        (text_findings(relative_path, source) ++ [scan_import_rule(relative_path, source)])
         |> Enum.reject(&is_nil/1)
     end
+  end
+
+  defp text_findings(relative_path, source, allow_patterns \\ []) do
+    [
+      scan_text_rule(
+        relative_path,
+        source,
+        :ndax_private_surface,
+        "ndax private/account/trading surface",
+        @ndax_private_patterns,
+        1,
+        allow_patterns
+      ),
+      scan_text_rule(
+        relative_path,
+        source,
+        :questrade_auth_account,
+        "questrade auth/account implementation",
+        @questrade_patterns,
+        2,
+        allow_patterns
+      ),
+      scan_text_rule(
+        relative_path,
+        source,
+        :credential_material,
+        "credential or account identifier material",
+        @credential_patterns,
+        1,
+        allow_patterns
+      ),
+      scan_text_rule(
+        relative_path,
+        source,
+        :webhook_persistence,
+        "secret-like webhook persistence or raw request storage",
+        @webhook_persistence_patterns,
+        1,
+        allow_patterns
+      ),
+      scan_text_rule(
+        relative_path,
+        source,
+        :listener_or_scheduler,
+        "listener, scheduler, daemon, tunnel, or service creation",
+        @listener_patterns,
+        1,
+        allow_patterns
+      )
+    ]
+    |> Enum.reject(&is_nil/1)
   end
 
   defp json_fixture_findings(project_root, relative_path, absolute_path, source) do
@@ -348,62 +375,120 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     envelope_path = Path.join(Path.dirname(absolute_path), envelope_fixture)
 
     with true <- File.exists?(envelope_path),
-         {:ok, envelope_json} <- Jason.decode(File.read!(envelope_path)),
-         %{"alias" => envelope_alias} <- Map.get(envelope_json, "operational_signal_ref"),
-         true <- fixture_alias == envelope_alias do
-      nil
-    else
-      false ->
-        finding(
-          relative_path,
-          find_line(source, fixture_alias),
-          :signal_ref_alias_mismatch,
-          "replay manifest signal_ref.fixture_alias must match the referenced signal-envelope alias",
-          fixture_alias
-        )
+         {:ok, envelope_json} <- Jason.decode(File.read!(envelope_path)) do
+      cond do
+        not is_map(envelope_json) ->
+          finding(
+            relative_path,
+            find_line(source, envelope_fixture),
+            :signal_ref_alias_mismatch,
+            "referenced signal-envelope fixture must be a JSON object",
+            envelope_fixture
+          )
 
+        not is_map(Map.get(envelope_json, "operational_signal_ref")) ->
+          finding(
+            relative_path,
+            find_line(source, fixture_alias),
+            :signal_ref_alias_mismatch,
+            "referenced signal-envelope fixture must expose operational_signal_ref.alias",
+            fixture_alias
+          )
+
+        Map.get(Map.get(envelope_json, "operational_signal_ref"), "alias") != fixture_alias ->
+          finding(
+            relative_path,
+            find_line(source, fixture_alias),
+            :signal_ref_alias_mismatch,
+            "replay manifest signal_ref.fixture_alias must match the referenced signal-envelope alias",
+            fixture_alias
+          )
+
+        true ->
+          nil
+      end
+    else
       _other ->
-        finding(
-          relative_path,
-          find_line(source, fixture_alias),
-          :signal_ref_alias_mismatch,
-          "referenced signal-envelope fixture must expose operational_signal_ref.alias",
-          fixture_alias
-        )
+        nil
     end
   end
 
   defp validate_eligible_rows(_project_root, relative_path, source, json) do
     market_context = Map.get(json, "market_context", %{})
-    eligible_rows = Map.get(market_context, "eligible_rows", [])
     decision_time = parse_datetime(Map.get(json, "decision_time"))
-    staleness_seconds = parse_duration_seconds(get_in(market_context, ["staleness_threshold"]))
 
-    eligible_rows
-    |> Enum.flat_map(fn row ->
-      violations = []
-      available_at = parse_datetime(Map.get(row, "available_at_utc"))
-      freshness_time = parse_datetime(Map.get(row, "source_event_time_utc")) || available_at
-      row_id = Map.get(row, "row_id", "eligible_rows")
-      row_snippet = row_id |> to_string()
+    cond do
+      not is_map(market_context) ->
+        [
+          finding(
+            relative_path,
+            find_line(source, "market_context"),
+            :fixture_context_shape,
+            "replay manifest market_context must be an object",
+            "\"market_context\""
+          )
+        ]
 
-      violations =
-        if future_row?(available_at, decision_time) do
-          [
-            finding(
-              relative_path,
-              find_line(source, row_snippet),
-              :future_or_stale_eligible_row,
-              "eligible_rows must exclude future rows and rows older than staleness_threshold",
-              row_snippet
-            )
-            | violations
-          ]
-        else
-          violations
-        end
+      not is_list(Map.get(market_context, "eligible_rows", [])) ->
+        eligible_rows_shape_finding(relative_path, source)
 
-      if stale_row?(freshness_time, decision_time, staleness_seconds) do
+      is_nil(decision_time) ->
+        [
+          finding(
+            relative_path,
+            find_line(source, "decision_time"),
+            :fixture_context_timing,
+            "replay manifest must provide a valid decision_time",
+            "\"decision_time\""
+          )
+        ]
+
+      is_nil(parse_duration_seconds(Map.get(market_context, "staleness_threshold"))) ->
+        [
+          finding(
+            relative_path,
+            find_line(source, "staleness_threshold"),
+            :fixture_context_timing,
+            "replay manifest market_context.staleness_threshold must be a valid ISO-8601 duration",
+            "\"staleness_threshold\""
+          )
+        ]
+
+      true ->
+        staleness_seconds = parse_duration_seconds(Map.get(market_context, "staleness_threshold"))
+
+        market_context
+        |> Map.get("eligible_rows", [])
+        |> Enum.flat_map(&eligible_row_findings(relative_path, source, &1, decision_time, staleness_seconds))
+    end
+  end
+
+  defp eligible_rows_shape_finding(relative_path, source) do
+    [
+      finding(
+        relative_path,
+        find_line(source, "eligible_rows"),
+        :eligible_rows_shape,
+        "replay manifest market_context.eligible_rows must be a list of row objects",
+        "\"eligible_rows\""
+      )
+    ]
+  end
+
+  defp eligible_row_findings(relative_path, source, row, _decision_time, _staleness_seconds)
+       when not is_map(row) do
+    eligible_rows_shape_finding(relative_path, source)
+  end
+
+  defp eligible_row_findings(relative_path, source, row, decision_time, staleness_seconds) do
+    violations = []
+    available_at = parse_datetime(Map.get(row, "available_at_utc"))
+    freshness_time = parse_datetime(Map.get(row, "source_event_time_utc")) || available_at
+    row_id = Map.get(row, "row_id", "eligible_rows")
+    row_snippet = row_id |> to_string()
+
+    violations =
+      if future_row?(available_at, decision_time) do
         [
           finding(
             relative_path,
@@ -417,7 +502,21 @@ defmodule SymphonyElixir.BoundaryGuardrails do
       else
         violations
       end
-    end)
+
+    if stale_row?(freshness_time, decision_time, staleness_seconds) do
+      [
+        finding(
+          relative_path,
+          find_line(source, row_snippet),
+          :future_or_stale_eligible_row,
+          "eligible_rows must exclude future rows and rows older than staleness_threshold",
+          row_snippet
+        )
+        | violations
+      ]
+    else
+      violations
+    end
   end
 
   defp validate_export_hygiene(relative_path, source, json) do
@@ -590,9 +689,9 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     end
   end
 
-  defp scan_text_rule(relative_path, source, rule, message, patterns, min_matches \\ 1) do
+  defp scan_text_rule(relative_path, source, rule, message, patterns, min_matches, allow_patterns) do
     matches =
-      line_matches(source, patterns)
+      line_matches(source, patterns, allow_patterns)
       |> Enum.take(min_matches)
 
     if length(matches) >= min_matches do
@@ -602,18 +701,23 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     end
   end
 
-  defp line_matches(source, patterns) do
+  defp line_matches(source, patterns, allow_patterns) do
     source
     |> String.split("\n")
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {line_text, line_number} ->
-      if Enum.any?(patterns, &Regex.match?(&1, line_text)) do
+      matched? = Enum.any?(patterns, &Regex.match?(&1, line_text))
+      allowed? = Enum.any?(allow_patterns, &Regex.match?(&1, line_text)) and not concrete_private_endpoint?(line_text)
+
+      if matched? and not allowed? do
         [%{line: line_number, snippet: String.trim(line_text)}]
       else
         []
       end
     end)
   end
+
+  defp concrete_private_endpoint?(line_text), do: Regex.match?(@private_endpoint_pattern, line_text)
 
   defp scan_import_rule(relative_path, source) do
     if replay_like_path?(relative_path) do

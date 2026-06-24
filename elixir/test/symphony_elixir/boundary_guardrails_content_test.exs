@@ -107,6 +107,34 @@ defmodule SymphonyElixir.BoundaryGuardrailsContentTest do
     end)
   end
 
+  test "reports forbidden content in governed markdown docs" do
+    in_temp_project(fn root ->
+      write_file!(root, "docs/tradingview/operator-example.md", """
+      # Operator example
+
+      Do not document private account routes such as /Account/GetBalances here.
+      """)
+
+      findings = BoundaryGuardrails.findings(root)
+
+      assert_rule(findings, "docs/tradingview/operator-example.md", :ndax_private_surface)
+    end)
+  end
+
+  test "allows prohibition wording in governed markdown docs" do
+    in_temp_project(fn root ->
+      write_file!(root, "docs/tradingview/operator-policy.md", """
+      # Operator policy
+
+      Do not use Questrade auth/account tokens in this dry-run project.
+      """)
+
+      findings = BoundaryGuardrails.findings(root)
+
+      refute Enum.any?(findings, &(&1.path == "docs/tradingview/operator-policy.md"))
+    end)
+  end
+
   defp assert_rule(findings, path, rule) do
     assert Enum.any?(findings, fn finding -> finding.path == path and finding.rule == rule end),
            "expected #{path} to report #{inspect(rule)}, got #{inspect(findings)}"
