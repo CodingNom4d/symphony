@@ -1,0 +1,14 @@
+[
+  {
+    "row_id": "quote_120002",
+    "record_family": "quote",
+    "available_at_utc": "2026-06-21T12:00:02Z",
+    "source_event_time_utc": "2026-06-21T12:00:01Z"
+  },
+  {
+    "row_id": "bar_120000_1m",
+    "record_family": "bar",
+    "available_at_utc": "2026-06-21T12:00:00Z",
+    "source_event_time_utc": "2026-06-21T12:00:00Z"
+  }
+]
