@@ -72,7 +72,7 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
 
           {
             eligible_rows,
-            put_nearer_future_row(audit_evidence, audit_key, future_row),
+            Map.put_new(audit_evidence, audit_key, future_row),
             row_counts
           }
 
@@ -86,7 +86,7 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
 
           {
             eligible_rows,
-            put_less_stale_row(audit_evidence, audit_key, stale_row),
+            Map.put_new(audit_evidence, audit_key, stale_row),
             row_counts
           }
 
@@ -150,18 +150,6 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
     |> Map.put("decision_time_offset", "PT0S")
   end
 
-  defp put_nearer_future_row(audit_evidence, audit_key, future_row) do
-    Map.update(audit_evidence, audit_key, future_row, fn current_row ->
-      if earlier_available_at?(future_row, current_row), do: future_row, else: current_row
-    end)
-  end
-
-  defp put_less_stale_row(audit_evidence, audit_key, stale_row) do
-    Map.update(audit_evidence, audit_key, stale_row, fn current_row ->
-      if less_stale?(stale_row, current_row), do: stale_row, else: current_row
-    end)
-  end
-
   defp fixture_label(matched_quote_row_id, matched_bar_row_id) do
     if matched_quote_row_id != nil and matched_bar_row_id != nil do
       @accepted_fixture_label
@@ -178,17 +166,6 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
 
   defp increment_row_counts(row_counts, "bar"),
     do: Map.update!(row_counts, "bars", &(&1 + 1))
-
-  defp earlier_available_at?(left_row, right_row) do
-    left_row
-    |> Map.fetch!("available_at_utc")
-    |> parse_datetime!()
-    |> DateTime.compare(parse_datetime!(Map.fetch!(right_row, "available_at_utc"))) == :lt
-  end
-
-  defp less_stale?(left_row, right_row) do
-    Map.fetch!(left_row, "age_at_decision_ms") < Map.fetch!(right_row, "age_at_decision_ms")
-  end
 
   defp signal_ref(signal_envelope) do
     fixture_alias =

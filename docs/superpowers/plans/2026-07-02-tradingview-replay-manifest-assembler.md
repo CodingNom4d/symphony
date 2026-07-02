@@ -46,7 +46,7 @@ Remove:
 - [x] **Step 4: Re-run the focused replay-manifest tests**
 
 Run: `cd elixir && mix test test/symphony_elixir/tradingview/replay_manifest_assembler_test.exs`
-Expected: 3 tests, 0 failures.
+Expected: 2 tests, 0 failures.
 
 ### Task 2: Run required verification
 

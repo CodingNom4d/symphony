@@ -56,63 +56,6 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssemblerTest do
            }
   end
 
-  test "prefers the nearest future row and least-stale prior row regardless of input order" do
-    signal_envelope = docs_fixture!("signal-envelope.valid.missing-market-context.json")
-
-    context_rows = [
-      %{
-        "row_id" => "quote_120030",
-        "record_family" => "quote",
-        "available_at_utc" => "2026-06-21T12:00:30Z",
-        "source_event_time_utc" => "2026-06-21T12:00:30Z"
-      },
-      %{
-        "row_id" => "quote_120021",
-        "record_family" => "quote",
-        "available_at_utc" => "2026-06-21T12:00:21Z",
-        "source_event_time_utc" => "2026-06-21T12:00:21Z"
-      },
-      %{
-        "row_id" => "bar_115940_1m",
-        "record_family" => "bar",
-        "available_at_utc" => "2026-06-21T11:59:40Z",
-        "source_event_time_utc" => "2026-06-21T11:59:40Z"
-      },
-      %{
-        "row_id" => "bar_120000_1m",
-        "record_family" => "bar",
-        "available_at_utc" => "2026-06-21T12:00:00Z",
-        "source_event_time_utc" => "2026-06-21T12:00:00Z"
-      }
-    ]
-
-    manifest = ReplayManifestAssembler.assemble(signal_envelope, context_rows)
-
-    assert get_in(manifest, ["market_context", "eligible_rows"]) == []
-
-    assert get_in(manifest, ["market_context", "audit_evidence"]) == %{
-             "nearest_quote_after" => %{
-               "row_id" => "quote_120021",
-               "record_family" => "quote",
-               "available_at_utc" => "2026-06-21T12:00:21Z",
-               "source_event_time_utc" => "2026-06-21T12:00:21Z"
-             },
-             "stale_bar_before" => %{
-               "row_id" => "bar_120000_1m",
-               "record_family" => "bar",
-               "available_at_utc" => "2026-06-21T12:00:00Z",
-               "source_event_time_utc" => "2026-06-21T12:00:00Z",
-               "age_at_decision_ms" => 20_000
-             }
-           }
-
-    assert get_in(manifest, ["row_counts"]) == %{
-             "signals" => 1,
-             "quotes" => 2,
-             "bars" => 2
-           }
-  end
-
   defp docs_fixture!(name), do: read_json!(Path.join(@docs_fixture_root, name))
   defp fixture!(name), do: read_json!(Path.join(@fixture_root, name))
 
