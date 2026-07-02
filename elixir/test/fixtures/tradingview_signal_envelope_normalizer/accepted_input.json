@@ -1,0 +1,21 @@
+{
+  "row_id": "signal_fixture_001",
+  "received_at_utc": "2026-06-21T12:00:02Z",
+  "strategy_id": "breakout-v1",
+  "strategy_version": "1.4.0",
+  "config_version_id": "cfg_20260621_01",
+  "payload_json": {
+    "symbol": "BTCCAD",
+    "side": "buy",
+    "source_event_time_utc": "2026-06-21T12:00:00Z",
+    "message": "enter long"
+  },
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_001"
+  },
+  "decision_provenance_ref": {
+    "kind": "decision_provenance",
+    "alias": "decision_provenance_fixture_001"
+  }
+}

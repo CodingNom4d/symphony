@@ -1,0 +1,16 @@
+{
+  "row_id": "signal_fixture_legacy_006",
+  "received_at_utc": "2026-06-21T12:00:25Z",
+  "legacy_row": true,
+  "strategy_id": "breakout-v1",
+  "strategy_version": "1.3.0",
+  "config_version_id": "cfg_legacy_01",
+  "payload_json": {
+    "ticker": "BTCCAD",
+    "direction": "long"
+  },
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_006"
+  }
+}

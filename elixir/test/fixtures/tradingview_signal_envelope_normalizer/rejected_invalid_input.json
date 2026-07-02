@@ -1,0 +1,18 @@
+{
+  "row_id": "signal_fixture_002",
+  "received_at_utc": "2026-06-21T12:00:05Z",
+  "strategy_id": "breakout-v1",
+  "strategy_version": "1.4.0",
+  "config_version_id": "cfg_20260621_01",
+  "payload_json": {
+    "message": "missing canonical fields"
+  },
+  "signal_provenance_ref": {
+    "kind": "signal_provenance",
+    "alias": "signal_provenance_fixture_002"
+  },
+  "decision_provenance_ref": {
+    "kind": "decision_provenance",
+    "alias": "decision_provenance_fixture_002"
+  }
+}
