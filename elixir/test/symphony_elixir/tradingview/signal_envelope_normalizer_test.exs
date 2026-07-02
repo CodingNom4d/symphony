@@ -149,13 +149,58 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     end
   end
 
-  test "preserves safe operational validation reason when present" do
+  test "preserves safe operational rejected status and reason when present" do
     input =
       fixture!("accepted_input.json")
+      |> Map.put("validation_status", "rejected")
       |> Map.put("validation_reason_code", "missing_market")
 
-    assert {:ok, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "rejected"
     assert Map.get(normalized, :validation_reason_code) == "missing_market"
+    assert Map.get(normalized, :signal_idempotency_hash) == nil
+  end
+
+  test "falls back to invalid payload for unsafe operational rejected reason" do
+    input =
+      fixture!("accepted_input.json")
+      |> Map.put("validation_status", "rejected")
+      |> Map.put("validation_reason_code", "operator approved")
+
+    assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "rejected"
+    assert Map.get(normalized, :validation_reason_code) == "invalid_payload"
+  end
+
+  test "accepts explicit operational accepted status" do
+    input =
+      fixture!("accepted_input.json")
+      |> Map.put("validation_status", "accepted")
+
+    assert {:ok, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "accepted"
+    assert Map.get(normalized, :validation_reason_code) == "accepted_replay"
+  end
+
+  test "accepts explicit operational legacy unmapped status" do
+    input =
+      fixture!("legacy_unmapped_input.json")
+      |> Map.put("validation_status", "legacy_unmapped")
+
+    assert {:ok, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "legacy_unmapped"
+    assert Map.get(normalized, :validation_reason_code) == "legacy_unmapped"
+  end
+
+  test "rejects unknown operational validation status" do
+    input =
+      fixture!("accepted_input.json")
+      |> Map.put("validation_status", "maybe")
+      |> Map.put("validation_reason_code", "missing_market")
+
+    assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "rejected"
+    assert Map.get(normalized, :validation_reason_code) == "invalid_payload"
   end
 
   test "rejects unexpected top-level input keys" do

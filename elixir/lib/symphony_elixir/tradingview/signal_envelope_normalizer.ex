@@ -33,6 +33,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     "strategy_id",
     "strategy_version",
     "transport",
+    "validation_status",
     "validation_reason_code"
   ]
 
@@ -47,6 +48,9 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     base = base_envelope(input)
 
     cond do
+      operational_rejected?(input) ->
+        {:error, rejected_envelope(base, input)}
+
       legacy_input?(input) ->
         {:ok, legacy_envelope(base, input)}
 
@@ -64,6 +68,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     payload = Map.get(input, "payload_json")
 
     safe_top_level_shape?(input) and
+      operational_status_allows?(input, @accepted_status) and
       required_base_fields?(input) and
       observed_at_valid?(input) and
       valid_lineage?(input) and
@@ -75,6 +80,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
 
     Map.get(input, "legacy_row") == true and
       safe_top_level_shape?(input) and
+      operational_status_allows?(input, @legacy_status) and
       required_base_fields?(input) and
       observed_at_valid?(input) and
       valid_signal_lineage?(Map.get(input, "signal_provenance_ref")) and
@@ -114,6 +120,12 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
   end
 
   defp present_string?(value), do: is_binary(value) and value != ""
+
+  defp operational_rejected?(input), do: Map.get(input, "validation_status") == @rejected_status
+
+  defp operational_status_allows?(input, status) do
+    Map.get(input, "validation_status") in [nil, status]
+  end
 
   defp observed_at_valid?(input) do
     input
@@ -252,7 +264,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
       intended_side: nil,
       source_event_time_utc: nil,
       validation_status: @rejected_status,
-      validation_reason_code: @rejected_reason,
+      validation_reason_code: reason_code(input, @rejected_reason),
       validation_failure_detail: "payload rejected during offline normalization",
       signal_provenance_ref: nil,
       decision_provenance_ref: nil
@@ -334,12 +346,14 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     %{alias: alias_value, kind: kind}
   end
 
-  defp reason_code(input, default) do
+  defp reason_code(%{"validation_status" => @rejected_status} = input, default) do
     case Map.get(input, "validation_reason_code") do
       value when value in @reason_codes -> value
       _ -> default
     end
   end
+
+  defp reason_code(_input, default), do: default
 
   defp iso8601?(value) when is_binary(value) do
     match?({:ok, _datetime, 0}, DateTime.from_iso8601(value))
