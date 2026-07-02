@@ -9,6 +9,16 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
   @rejected_reason "invalid_payload"
   @legacy_reason "legacy_unmapped"
   @max_payload_bytes 4096
+  @reason_codes [
+    @accepted_reason,
+    @rejected_reason,
+    @legacy_reason,
+    "future_quote",
+    "future_signal",
+    "missing_market",
+    "stale_quote",
+    "stale_signal"
+  ]
 
   @allowed_input_keys [
     "config_version_id",
@@ -22,7 +32,8 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     "signal_provenance_ref",
     "strategy_id",
     "strategy_version",
-    "transport"
+    "transport",
+    "validation_reason_code"
   ]
 
   @accepted_payload_keys ["message", "side", "source_event_time_utc", "symbol"]
@@ -53,6 +64,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     payload = Map.get(input, "payload_json")
 
     safe_top_level_shape?(input) and
+      required_base_fields?(input) and
       observed_at_valid?(input) and
       valid_lineage?(input) and
       accepted_payload?(payload)
@@ -63,9 +75,15 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
 
     Map.get(input, "legacy_row") == true and
       safe_top_level_shape?(input) and
+      required_base_fields?(input) and
       observed_at_valid?(input) and
       valid_signal_lineage?(Map.get(input, "signal_provenance_ref")) and
-      is_map(payload) and
+      legacy_payload?(payload)
+  end
+
+  defp legacy_payload?(payload) do
+    is_map(payload) and
+      json_safe?(payload) and
       safe_payload_shape?(payload, @legacy_payload_keys) and
       not tainted_payload?(payload) and
       payload_size_ok?(payload)
@@ -79,6 +97,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
 
   defp accepted_payload?(payload) do
     is_map(payload) and
+      json_safe?(payload) and
       safe_payload_shape?(payload, @accepted_payload_keys) and
       not tainted_payload?(payload) and
       payload_size_ok?(payload) and
@@ -86,6 +105,15 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
       accepted_symbol(payload) != nil and
       accepted_side(payload) != nil
   end
+
+  defp required_base_fields?(input) do
+    present_string?(Map.get(input, "row_id")) and
+      present_string?(Map.get(input, "strategy_id")) and
+      present_string?(Map.get(input, "strategy_version")) and
+      present_string?(Map.get(input, "config_version_id"))
+  end
+
+  defp present_string?(value), do: is_binary(value) and value != ""
 
   defp observed_at_valid?(input) do
     input
@@ -169,7 +197,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
         intended_side: intended_side,
         source_event_time_utc: source_event_time,
         validation_status: @accepted_status,
-        validation_reason_code: @accepted_reason,
+        validation_reason_code: reason_code(input, @accepted_reason),
         validation_failure_detail: nil,
         signal_provenance_ref: lineage_alias(Map.get(input, "signal_provenance_ref")),
         decision_provenance_ref: lineage_alias(Map.get(input, "decision_provenance_ref"))
@@ -201,7 +229,6 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     Map.merge(base, %{
       signal_idempotency_hash: nil,
       payload_hash: hash_payload(payload),
-      payload_size_bytes: byte_size(canonical_payload(payload)),
       canonical_instrument_id: nil,
       source_symbol: Map.get(payload, "ticker"),
       intended_side: nil,
@@ -220,7 +247,6 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     Map.merge(base, %{
       signal_idempotency_hash: nil,
       payload_hash: hash_payload(payload),
-      payload_size_bytes: byte_size(canonical_payload(payload)),
       canonical_instrument_id: nil,
       source_symbol: nil,
       intended_side: nil,
@@ -234,8 +260,12 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
   end
 
   defp retained_payload(%{"payload_json" => payload}) when is_map(payload) do
-    payload
-    |> Map.take(@accepted_payload_keys ++ @legacy_payload_keys)
+    cond do
+      not json_safe?(payload) -> %{}
+      tainted_payload?(payload) -> %{}
+      not payload_size_ok?(payload) -> %{}
+      true -> Map.take(payload, @accepted_payload_keys ++ @legacy_payload_keys)
+    end
   end
 
   defp retained_payload(_input), do: %{}
@@ -304,6 +334,13 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
     %{alias: alias_value, kind: kind}
   end
 
+  defp reason_code(input, default) do
+    case Map.get(input, "validation_reason_code") do
+      value when value in @reason_codes -> value
+      _ -> default
+    end
+  end
+
   defp iso8601?(value) when is_binary(value) do
     match?({:ok, _datetime, 0}, DateTime.from_iso8601(value))
   end
@@ -317,6 +354,19 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizer do
   end
 
   defp canonical_payload(value), do: canonical_json(value)
+
+  defp json_safe?(value) when is_map(value) do
+    Enum.all?(value, fn {key, nested_value} ->
+      is_binary(key) and json_safe?(nested_value)
+    end)
+  end
+
+  defp json_safe?(value) when is_list(value), do: Enum.all?(value, &json_safe?/1)
+  defp json_safe?(value) when is_binary(value), do: true
+  defp json_safe?(value) when is_number(value), do: true
+  defp json_safe?(value) when is_boolean(value), do: true
+  defp json_safe?(nil), do: true
+  defp json_safe?(_value), do: false
 
   defp canonical_json(value) when is_map(value) do
     members =

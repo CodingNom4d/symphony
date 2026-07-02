@@ -45,7 +45,6 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     assert Map.get(normalized, :source_symbol) == nil
     assert Map.get(normalized, :intended_side) == nil
     assert Map.get(normalized, :payload_hash) == rejected_payload_hash()
-    assert Map.get(normalized, :payload_size_bytes) == 38
   end
 
   test "rejects tainted accepted payload content" do
@@ -56,6 +55,23 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
     assert Map.get(normalized, :validation_status) == "rejected"
     assert Map.get(normalized, :validation_reason_code) == "invalid_payload"
+  end
+
+  test "hashes only redacted retained content for tainted rejected payloads" do
+    first =
+      fixture!("accepted_input.json")
+      |> put_in(["payload_json", "message"], tainted_message("one"))
+
+    second =
+      fixture!("accepted_input.json")
+      |> put_in(["payload_json", "message"], tainted_message("two"))
+
+    assert {:error, normalized_first} = SignalEnvelopeNormalizer.normalize(first)
+    assert {:error, normalized_second} = SignalEnvelopeNormalizer.normalize(second)
+
+    assert Map.get(normalized_first, :payload_hash) == Map.get(normalized_second, :payload_hash)
+    refute inspect(normalized_first) =~ "runtime-only-one"
+    refute inspect(normalized_second) =~ "runtime-only-two"
   end
 
   test "rejects oversized payloads" do
@@ -74,6 +90,15 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     assert Map.get(normalized, :operational_signal_ref) == %{alias: nil}
   end
 
+  test "rejects malformed map input without raising" do
+    input =
+      fixture!("accepted_input.json")
+      |> put_in(["payload_json", "message"], {:not_json_safe, self()})
+
+    assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "rejected"
+  end
+
   test "marks legacy unmapped fixtures as non-deduplicable" do
     input = fixture!("legacy_unmapped_input.json")
 
@@ -82,6 +107,15 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     assert Map.get(normalized, :validation_status) == "legacy_unmapped"
     assert Map.get(normalized, :signal_idempotency_hash) == nil
     assert Map.get(normalized, :validation_reason_code) == "legacy_unmapped"
+  end
+
+  test "rejects legacy rows with malformed payload values" do
+    input =
+      fixture!("legacy_unmapped_input.json")
+      |> Map.put("payload_json", "not-a-map")
+
+    assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_status) == "rejected"
   end
 
   test "ignores post-decision context when normalizing accepted input" do
@@ -102,6 +136,26 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     assert Map.get(normalized, :validation_reason_code) == "invalid_payload"
     assert Map.get(normalized, :signal_provenance_ref) == nil
     assert Map.get(normalized, :decision_provenance_ref) == nil
+  end
+
+  test "fails closed when accepted identity or strategy lineage is missing" do
+    for field <- ["row_id", "strategy_id", "strategy_version", "config_version_id"] do
+      input =
+        fixture!("accepted_input.json")
+        |> Map.delete(field)
+
+      assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
+      assert Map.get(normalized, :validation_status) == "rejected"
+    end
+  end
+
+  test "preserves safe operational validation reason when present" do
+    input =
+      fixture!("accepted_input.json")
+      |> Map.put("validation_reason_code", "missing_market")
+
+    assert {:ok, normalized} = SignalEnvelopeNormalizer.normalize(input)
+    assert Map.get(normalized, :validation_reason_code) == "missing_market"
   end
 
   test "rejects unexpected top-level input keys" do
@@ -129,6 +183,21 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
 
     assert {:error, normalized} = SignalEnvelopeNormalizer.normalize(input)
     assert Map.get(normalized, :validation_status) == "rejected"
+  end
+
+  test "accepts JSON-safe boolean and list payload values" do
+    boolean_input =
+      fixture!("accepted_input.json")
+      |> put_in(["payload_json", "message"], true)
+
+    list_input =
+      fixture!("accepted_input.json")
+      |> put_in(["payload_json", "message"], ["enter", "long"])
+
+    assert {:ok, boolean_normalized} = SignalEnvelopeNormalizer.normalize(boolean_input)
+    assert {:ok, list_normalized} = SignalEnvelopeNormalizer.normalize(list_input)
+    assert Map.get(boolean_normalized, :validation_status) == "accepted"
+    assert Map.get(list_normalized, :validation_status) == "accepted"
   end
 
   test "rejects nested tainted content" do
@@ -217,11 +286,11 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
 
   defp fixture!(name), do: read_json!(Path.join(@fixture_root, name))
 
-  defp tainted_message do
+  defp tainted_message(suffix \\ "runtime-only") do
     Enum.join([
       Enum.join(["api", "key"], "_"),
       "=",
-      "runtime-only"
+      suffix
     ])
   end
 
@@ -250,11 +319,7 @@ defmodule SymphonyElixir.Tradingview.SignalEnvelopeNormalizerTest do
     ]
   end
 
-  defp rejected_keys do
-    accepted_keys()
-    |> List.insert_at(11, :payload_size_bytes)
-    |> Enum.sort()
-  end
+  defp rejected_keys, do: accepted_keys()
 
   defp legacy_keys, do: rejected_keys()
 
