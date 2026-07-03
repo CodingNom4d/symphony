@@ -56,6 +56,38 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssemblerTest do
            }
   end
 
+  test "treats subsecond rows older than the staleness threshold as stale" do
+    signal_envelope = docs_fixture!("signal-envelope.valid.minimal.json")
+
+    context_rows = [
+      %{
+        "row_id" => "quote_115956_999",
+        "record_family" => "quote",
+        "available_at_utc" => "2026-06-21T11:59:56.999Z",
+        "source_event_time_utc" => "2026-06-21T11:59:56.999Z"
+      },
+      %{
+        "row_id" => "bar_120000_1m",
+        "record_family" => "bar",
+        "available_at_utc" => "2026-06-21T12:00:00Z",
+        "source_event_time_utc" => "2026-06-21T12:00:00Z"
+      }
+    ]
+
+    manifest = ReplayManifestAssembler.assemble(signal_envelope, context_rows)
+
+    assert get_in(manifest, ["fixture_label"]) == "insufficient_data"
+    refute Enum.any?(get_in(manifest, ["market_context", "eligible_rows"]), &(&1["row_id"] == "quote_115956_999"))
+
+    assert get_in(manifest, ["market_context", "audit_evidence", "stale_quote_before"]) == %{
+             "row_id" => "quote_115956_999",
+             "record_family" => "quote",
+             "available_at_utc" => "2026-06-21T11:59:56.999Z",
+             "source_event_time_utc" => "2026-06-21T11:59:56.999Z",
+             "age_at_decision_ms" => 5_001
+           }
+  end
+
   defp docs_fixture!(name), do: read_json!(Path.join(@docs_fixture_root, name))
   defp fixture!(name), do: read_json!(Path.join(@fixture_root, name))
 

@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
   @accepted_fixture_label "accepted_replay"
   @insufficient_fixture_label "insufficient_data"
   @staleness_threshold "PT5S"
-  @staleness_seconds 5
+  @staleness_milliseconds 5_000
   @signal_envelope_fixtures_by_alias %{
     "signal_fixture_001" => "signal-envelope.valid.minimal.json",
     "signal_fixture_005" => "signal-envelope.valid.missing-market-context.json"
@@ -76,7 +76,7 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
             row_counts
           }
 
-        DateTime.diff(decision_time, source_event_time, :second) > @staleness_seconds ->
+        DateTime.diff(decision_time, source_event_time, :millisecond) > @staleness_milliseconds ->
           stale_row =
             row
             |> copy_row_fields()
