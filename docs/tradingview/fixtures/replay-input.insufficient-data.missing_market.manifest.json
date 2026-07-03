@@ -32,11 +32,26 @@
       "matched_quote_row_id": null,
       "matched_bar_row_id": null
     },
-    "eligible_rows": []
+    "eligible_rows": [],
+    "audit_evidence": {
+      "nearest_quote_after": {
+        "row_id": "quote_120021",
+        "record_family": "quote",
+        "available_at_utc": "2026-06-21T12:00:21Z",
+        "source_event_time_utc": "2026-06-21T12:00:21Z"
+      },
+      "stale_bar_before": {
+        "row_id": "bar_120000_1m",
+        "record_family": "bar",
+        "available_at_utc": "2026-06-21T12:00:00Z",
+        "source_event_time_utc": "2026-06-21T12:00:00Z",
+        "age_at_decision_ms": 20000
+      }
+    }
   },
   "row_counts": {
     "signals": 1,
-    "quotes": 0,
-    "bars": 0
+    "quotes": 1,
+    "bars": 1
   }
 }
