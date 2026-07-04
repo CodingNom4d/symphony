@@ -88,6 +88,58 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssemblerTest do
            }
   end
 
+  test "assembles the future quote rejected fixture path" do
+    signal_envelope = docs_fixture!("signal-envelope.valid.future-quote-context.json")
+    expected = docs_fixture!("replay-input.future-data-rejected.future_quote.manifest.json")
+
+    context_rows = [
+      %{
+        "row_id" => "quote_120003",
+        "record_family" => "quote",
+        "available_at_utc" => "2026-06-21T12:00:03Z",
+        "source_event_time_utc" => "2026-06-21T12:00:03Z"
+      }
+    ]
+
+    manifest = ReplayManifestAssembler.assemble(signal_envelope, context_rows)
+
+    assert manifest == expected
+  end
+
+  test "assembles the stale quote rejected fixture path" do
+    signal_envelope = docs_fixture!("signal-envelope.valid.stale-context.json")
+    expected = docs_fixture!("replay-input.stale-context.stale_quote.manifest.json")
+
+    context_rows = [
+      %{
+        "row_id" => "quote_120001",
+        "record_family" => "quote",
+        "available_at_utc" => "2026-06-21T12:00:01Z",
+        "source_event_time_utc" => "2026-06-21T12:00:01Z"
+      }
+    ]
+
+    manifest = ReplayManifestAssembler.assemble(signal_envelope, context_rows)
+
+    assert manifest == expected
+  end
+
+  test "uses an explicit envelope fixture name for new signal aliases" do
+    signal_envelope =
+      "signal-envelope.valid.future-quote-context.json"
+      |> docs_fixture!()
+      |> Map.put("envelope_fixture", "signal-envelope.valid.future-quote-context.json")
+
+    context_rows = fixture!("accepted_context_rows.json")
+
+    manifest = ReplayManifestAssembler.assemble(signal_envelope, context_rows)
+
+    assert get_in(manifest, ["signal_ref"]) == %{
+             "fixture_alias" => "signal_fixture_003",
+             "envelope_fixture" => "signal-envelope.valid.future-quote-context.json"
+           }
+  end
+
   defp docs_fixture!(name), do: read_json!(Path.join(@docs_fixture_root, name))
   defp fixture!(name), do: read_json!(Path.join(@fixture_root, name))
 

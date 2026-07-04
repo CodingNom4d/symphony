@@ -37,6 +37,30 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
     end)
   end
 
+  test "rejects replay manifests that reference envelope fixtures outside the fixture directory" do
+    in_temp_project(fn root ->
+      File.mkdir_p!(Path.join(root, "docs/tradingview/other"))
+
+      Path.join(root, "docs/tradingview/other/outside.json")
+      |> File.write!(
+        Jason.encode_to_iodata!(%{
+          "signal_schema_version" => "tv.signal-envelope.v1",
+          "operational_signal_ref" => %{"alias" => "signal_fixture_001"}
+        })
+      )
+
+      write_fixture_set!(
+        root,
+        signal_ref: %{
+          "fixture_alias" => "signal_fixture_001",
+          "envelope_fixture" => "../other/outside.json"
+        }
+      )
+
+      assert_rule(root, :envelope_fixture_path)
+    end)
+  end
+
   test "rejects a replay manifest whose alias differs from the signal-envelope alias" do
     in_temp_project(fn root ->
       write_fixture_set!(
@@ -146,6 +170,18 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
       )
 
       assert_rule(root, :fixture_context_shape)
+    end)
+  end
+
+  test "rejects replay manifests that omit eligible_rows" do
+    in_temp_project(fn root ->
+      write_fixture_set!(root)
+
+      update_manifest!(root, fn manifest ->
+        update_in(manifest, ["market_context"], &Map.delete(&1, "eligible_rows"))
+      end)
+
+      assert_rule(root, :eligible_rows_shape)
     end)
   end
 
@@ -335,5 +371,15 @@ defmodule SymphonyElixir.BoundaryGuardrailsTradingviewFixtureTest do
 
   defp write_json!(path, data) do
     File.write!(path, Jason.encode_to_iodata!(data, pretty: true))
+  end
+
+  defp update_manifest!(root, fun) do
+    path = Path.join(root, "docs/tradingview/fixtures/replay-input.accepted-replay.manifest.json")
+
+    path
+    |> File.read!()
+    |> Jason.decode!()
+    |> fun.()
+    |> then(&write_json!(path, &1))
   end
 end

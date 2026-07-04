@@ -334,6 +334,7 @@ defmodule SymphonyElixir.BoundaryGuardrails do
         %{"fixture_alias" => fixture_alias, "envelope_fixture" => envelope_fixture}
         when is_binary(fixture_alias) and is_binary(envelope_fixture) ->
           [
+            validate_envelope_fixture_path(relative_path, source, envelope_fixture),
             validate_envelope_fixture_exists(relative_path, absolute_path, source, envelope_fixture),
             validate_signal_ref_alias(relative_path, absolute_path, source, fixture_alias, envelope_fixture),
             validate_eligible_rows(project_root, relative_path, source, json)
@@ -356,6 +357,14 @@ defmodule SymphonyElixir.BoundaryGuardrails do
   end
 
   defp validate_envelope_fixture_exists(relative_path, absolute_path, source, envelope_fixture) do
+    if unsafe_envelope_fixture_path?(envelope_fixture) do
+      nil
+    else
+      do_validate_envelope_fixture_exists(relative_path, absolute_path, source, envelope_fixture)
+    end
+  end
+
+  defp do_validate_envelope_fixture_exists(relative_path, absolute_path, source, envelope_fixture) do
     envelope_path = Path.join(Path.dirname(absolute_path), envelope_fixture)
 
     if File.exists?(envelope_path) do
@@ -372,6 +381,14 @@ defmodule SymphonyElixir.BoundaryGuardrails do
   end
 
   defp validate_signal_ref_alias(relative_path, absolute_path, source, fixture_alias, envelope_fixture) do
+    if unsafe_envelope_fixture_path?(envelope_fixture) do
+      nil
+    else
+      do_validate_signal_ref_alias(relative_path, absolute_path, source, fixture_alias, envelope_fixture)
+    end
+  end
+
+  defp do_validate_signal_ref_alias(relative_path, absolute_path, source, fixture_alias, envelope_fixture) do
     envelope_path = Path.join(Path.dirname(absolute_path), envelope_fixture)
 
     with true <- File.exists?(envelope_path),
@@ -413,6 +430,23 @@ defmodule SymphonyElixir.BoundaryGuardrails do
     end
   end
 
+  defp validate_envelope_fixture_path(relative_path, source, envelope_fixture) do
+    if unsafe_envelope_fixture_path?(envelope_fixture) do
+      finding(
+        relative_path,
+        find_line(source, envelope_fixture),
+        :envelope_fixture_path,
+        "replay manifest signal_ref.envelope_fixture must name a fixture file in the same fixture directory",
+        envelope_fixture
+      )
+    end
+  end
+
+  defp unsafe_envelope_fixture_path?(envelope_fixture) do
+    Path.basename(envelope_fixture) != envelope_fixture or
+      Path.type(envelope_fixture) != :relative
+  end
+
   defp validate_eligible_rows(_project_root, relative_path, source, json) do
     market_context = Map.get(json, "market_context", %{})
     decision_time = parse_datetime(Map.get(json, "decision_time"))
@@ -429,7 +463,8 @@ defmodule SymphonyElixir.BoundaryGuardrails do
           )
         ]
 
-      not is_list(Map.get(market_context, "eligible_rows", [])) ->
+      not Map.has_key?(market_context, "eligible_rows") or
+          not is_list(Map.get(market_context, "eligible_rows")) ->
         eligible_rows_shape_finding(relative_path, source)
 
       is_nil(decision_time) ->

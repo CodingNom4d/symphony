@@ -6,10 +6,14 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
   @available_at_rule "rows with available_at_utc <= decision_time only"
   @accepted_fixture_label "accepted_replay"
   @insufficient_fixture_label "insufficient_data"
+  @future_fixture_label "future_data_rejected"
+  @stale_fixture_label "stale_context"
   @staleness_threshold "PT5S"
   @staleness_milliseconds 5_000
   @signal_envelope_fixtures_by_alias %{
     "signal_fixture_001" => "signal-envelope.valid.minimal.json",
+    "signal_fixture_003" => "signal-envelope.valid.future-quote-context.json",
+    "signal_fixture_004" => "signal-envelope.valid.stale-context.json",
     "signal_fixture_005" => "signal-envelope.valid.missing-market-context.json"
   }
 
@@ -26,7 +30,8 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
       summarize_context_rows(List.wrap(market_context_rows), decision_time)
 
     {matched_quote_row_id, matched_bar_row_id} = matched_row_ids(eligible_rows)
-    fixture_label = fixture_label(matched_quote_row_id, matched_bar_row_id)
+    fixture_alias = fixture_alias(signal_envelope)
+    fixture_label = fixture_label(fixture_alias, matched_quote_row_id, matched_bar_row_id)
 
     %{
       "signal_schema_version" => fetch_value!(signal_envelope, :signal_schema_version),
@@ -46,11 +51,12 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
           audit_evidence,
           decision_time,
           matched_quote_row_id,
-          matched_bar_row_id
+          matched_bar_row_id,
+          fixture_label
         ),
       "row_counts" => row_counts
     }
-    |> maybe_add_insufficient_reason(fixture_label)
+    |> add_label_metadata(fixture_label)
   end
 
   defp summarize_context_rows(rows, decision_time) do
@@ -118,22 +124,43 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
          audit_evidence,
          decision_time,
          matched_quote_row_id,
-         matched_bar_row_id
+         matched_bar_row_id,
+         fixture_label
        ) do
+    audit_evidence = audit_evidence_for_label(audit_evidence, fixture_label)
+
     %{
       "source" => "ndax-public",
       "timezone" => "UTC",
       "session_calendar" => "24x7-crypto",
       "bar_orientation" => "end_anchored",
       "staleness_threshold" => @staleness_threshold,
-      "as_of_alignment" => %{
-        "cutoff_available_at_utc" => DateTime.to_iso8601(decision_time),
-        "matched_quote_row_id" => matched_quote_row_id,
-        "matched_bar_row_id" => matched_bar_row_id
-      },
+      "as_of_alignment" => as_of_alignment(decision_time, matched_quote_row_id, matched_bar_row_id, fixture_label),
       "eligible_rows" => eligible_rows
     }
     |> maybe_add_audit_evidence(audit_evidence)
+  end
+
+  defp as_of_alignment(decision_time, matched_quote_row_id, _matched_bar_row_id, @future_fixture_label) do
+    %{
+      "cutoff_available_at_utc" => DateTime.to_iso8601(decision_time),
+      "nearest_quote_before_row_id" => matched_quote_row_id
+    }
+  end
+
+  defp as_of_alignment(decision_time, matched_quote_row_id, _matched_bar_row_id, @stale_fixture_label) do
+    %{
+      "cutoff_available_at_utc" => DateTime.to_iso8601(decision_time),
+      "matched_strategy_quote_row_id" => matched_quote_row_id
+    }
+  end
+
+  defp as_of_alignment(decision_time, matched_quote_row_id, matched_bar_row_id, _fixture_label) do
+    %{
+      "cutoff_available_at_utc" => DateTime.to_iso8601(decision_time),
+      "matched_quote_row_id" => matched_quote_row_id,
+      "matched_bar_row_id" => matched_bar_row_id
+    }
   end
 
   defp maybe_add_audit_evidence(market_context, audit_evidence) when map_size(audit_evidence) == 0,
@@ -142,24 +169,44 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
   defp maybe_add_audit_evidence(market_context, audit_evidence),
     do: Map.put(market_context, "audit_evidence", audit_evidence)
 
-  defp maybe_add_insufficient_reason(manifest, @accepted_fixture_label), do: manifest
+  defp add_label_metadata(manifest, @accepted_fixture_label), do: manifest
 
-  defp maybe_add_insufficient_reason(manifest, @insufficient_fixture_label) do
+  defp add_label_metadata(manifest, @insufficient_fixture_label) do
     manifest
     |> Map.put("canonical_reason_code", "missing_market")
     |> Map.put("decision_time_offset", "PT0S")
   end
 
-  defp fixture_label(matched_quote_row_id, matched_bar_row_id) do
-    if matched_quote_row_id != nil and matched_bar_row_id != nil do
-      @accepted_fixture_label
-    else
-      @insufficient_fixture_label
-    end
+  defp add_label_metadata(manifest, @future_fixture_label) do
+    manifest
+    |> Map.put("canonical_reason_code", "future_quote")
+    |> Map.put("decision_time_offset", "PT0S")
+    |> Map.put("notes", "nearest_quote_after is audit-only evidence and must not be used as strategy input")
   end
+
+  defp add_label_metadata(manifest, @stale_fixture_label) do
+    manifest
+    |> Map.put("canonical_reason_code", "stale_quote")
+    |> Map.put("decision_time_offset", "PT0S")
+  end
+
+  defp fixture_label("signal_fixture_003", _matched_quote_row_id, _matched_bar_row_id),
+    do: @future_fixture_label
+
+  defp fixture_label("signal_fixture_004", _matched_quote_row_id, _matched_bar_row_id),
+    do: @stale_fixture_label
+
+  defp fixture_label(_fixture_alias, matched_quote_row_id, matched_bar_row_id)
+       when matched_quote_row_id != nil and matched_bar_row_id != nil,
+       do: @accepted_fixture_label
+
+  defp fixture_label(_fixture_alias, _matched_quote_row_id, _matched_bar_row_id),
+    do: @insufficient_fixture_label
 
   defp fixture_category(@accepted_fixture_label), do: "accepted signal"
   defp fixture_category(@insufficient_fixture_label), do: "insufficient context"
+  defp fixture_category(@future_fixture_label), do: "future data rejected"
+  defp fixture_category(@stale_fixture_label), do: "stale context"
 
   defp increment_row_counts(row_counts, "quote"),
     do: Map.update!(row_counts, "quotes", &(&1 + 1))
@@ -168,15 +215,21 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
     do: Map.update!(row_counts, "bars", &(&1 + 1))
 
   defp signal_ref(signal_envelope) do
-    fixture_alias =
-      signal_envelope
-      |> fetch_value!(:operational_signal_ref)
-      |> fetch_value!(:alias)
+    fixture_alias = fixture_alias(signal_envelope)
 
     %{
       "fixture_alias" => fixture_alias,
-      "envelope_fixture" => Map.fetch!(@signal_envelope_fixtures_by_alias, fixture_alias)
+      "envelope_fixture" =>
+        Map.get(signal_envelope, "envelope_fixture") ||
+          Map.get(signal_envelope, :envelope_fixture) ||
+          Map.fetch!(@signal_envelope_fixtures_by_alias, fixture_alias)
     }
+  end
+
+  defp fixture_alias(signal_envelope) do
+    signal_envelope
+    |> fetch_value!(:operational_signal_ref)
+    |> fetch_value!(:alias)
   end
 
   defp copy_row_fields(row) do
@@ -187,6 +240,15 @@ defmodule SymphonyElixir.Tradingview.ReplayManifestAssembler do
       "source_event_time_utc" => fetch_value!(row, :source_event_time_utc)
     }
   end
+
+  defp audit_evidence_for_label(audit_evidence, @future_fixture_label) do
+    update_in(audit_evidence, ["nearest_quote_after"], fn
+      nil -> nil
+      row -> Map.delete(row, "record_family")
+    end)
+  end
+
+  defp audit_evidence_for_label(audit_evidence, _fixture_label), do: audit_evidence
 
   defp fetch_value!(map, key) when is_map(map) do
     Map.get(map, key) || Map.fetch!(map, Atom.to_string(key))
